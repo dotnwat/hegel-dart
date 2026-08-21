@@ -9,10 +9,15 @@ import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
 import 'codec/bigint.dart';
+import 'collection.dart';
 import 'errors.dart';
 import 'marshal.dart';
+import 'pool.dart';
+import 'run.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'span.dart';
+import 'state_machine.dart';
 import 'string_generator.dart';
 
 /// A drawn calendar date.
@@ -74,7 +79,18 @@ final class TestCaseFamily {
 /// the case must be marked complete before the run can advance.
 final class TestCase implements ffi.Finalizable {
   @internal
-  TestCase(this.session, this._handle, this.family, {this.onComplete});
+  TestCase(
+    this.session,
+    this._handle,
+    this.family, {
+    this.onComplete,
+    this.borrowed = false,
+  });
+
+  /// Whether this is a borrowed view rather than the owning handle.
+  ///
+  /// A borrowed view never frees; the isolate that made the handle does.
+  final bool borrowed;
 
   /// The session this handle belongs to.
   @internal
@@ -192,31 +208,43 @@ final class TestCase implements ffi.Finalizable {
     Settings settings,
     String blob, {
     Libhegel? session,
+    void Function(String line)? onOutput,
   }) {
     final active = session ?? Libhegel.instance;
-    return settings.withNative(active, (
-      ffi.Pointer<raw.hegel_settings_t> handle,
-    ) {
-      final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
-      return using((Arena arena) {
-        try {
-          active.check(
-            active.bindings.hegel_test_case_from_blob(
-              active.context,
-              handle,
-              toCString(arena, blob, 'blob'),
-              ffi.nullptr,
-              ffi.nullptr,
-              out,
-            ),
-            'hegel_test_case_from_blob',
-          );
-          return TestCase(active, out.value, TestCaseFamily());
-        } finally {
-          calloc.free(out);
-        }
+    // The ABI says this callback need not outlive the call, so unlike a run's
+    // it is released as soon as the replay has been set up.
+    final sink = onOutput == null ? null : OutputSink(onOutput);
+    try {
+      return settings.withNative(active, (
+        ffi.Pointer<raw.hegel_settings_t> handle,
+      ) {
+        final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
+        return using((Arena arena) {
+          try {
+            active.check(
+              active.bindings.hegel_test_case_from_blob(
+                active.context,
+                handle,
+                toCString(arena, blob, 'blob'),
+                sink?.pointer ?? ffi.nullptr,
+                ffi.nullptr,
+                out,
+              ),
+              'hegel_test_case_from_blob',
+            );
+            if (sink?.failure case final failure?) {
+              active.bindings.hegel_test_case_free(active.context, out.value);
+              Error.throwWithStackTrace(failure.$1, failure.$2);
+            }
+            return TestCase(active, out.value, TestCaseFamily());
+          } finally {
+            calloc.free(out);
+          }
+        });
       });
-    });
+    } finally {
+      sink?.close();
+    }
   }
 
   void _refuseIfComplete() {
@@ -286,6 +314,213 @@ final class TestCase implements ffi.Finalizable {
       }
       return _generateInteger(min, max);
     });
+  }
+
+  /// Runs [body] under this case's guards and abort latch.
+  ///
+  /// Collections, pools, and state machines are driven through a test case's
+  /// stream, so their operations belong under the same guards as a draw.
+  @internal
+  T guarded<T>(T Function() body) => _guarded(body);
+
+  /// Starts an engine-driven sequence of [minSize] to [maxSize] elements.
+  ///
+  /// The engine decides how many elements to produce: loop on
+  /// [Collection.more] and draw one element each time it answers true. A null
+  /// [maxSize] leaves the length unbounded.
+  Collection startCollection({required int minSize, int? maxSize}) {
+    return _guarded(() {
+      checkFitsUnsigned(minSize, 'minSize');
+      if (maxSize != null && minSize > maxSize) {
+        throw ArgumentError.value(minSize, 'minSize', 'exceeds maxSize');
+      }
+      final out = calloc<ffi.Pointer<raw.hegel_collection_t>>();
+      try {
+        session.check(
+          session.bindings.hegel_new_collection(
+            session.context,
+            handle,
+            minSize,
+            sizeOrUnbounded(maxSize, 'maxSize'),
+            out,
+          ),
+          'hegel_new_collection',
+        );
+        return Collection(session, out.value);
+      } finally {
+        calloc.free(out);
+      }
+    });
+  }
+
+  /// Registers a state machine and lets the engine sequence its rules.
+  ///
+  /// [ruleGroups] assigns each rule to a concurrency group, defaulting to one
+  /// group for everything; rules in a group may overlap, rules in different
+  /// groups never do. The engine draws the concurrency level somewhere in
+  /// [minConcurrency] to [maxConcurrency] and the caller must run exactly that
+  /// many workers.
+  ///
+  /// Asking for more than one worker declares the run nondeterministic. The
+  /// first such request on a run raises [AssumptionFailed]: abandon the body
+  /// and report the case invalid, and the engine will allow it from the next
+  /// case onward.
+  StateMachine newStateMachine({
+    required List<String> ruleNames,
+    List<int>? ruleGroups,
+    List<String> invariantNames = const <String>[],
+    int minConcurrency = 1,
+    int maxConcurrency = 1,
+  }) {
+    return _guarded(() {
+      if (ruleNames.isEmpty) {
+        throw ArgumentError.value(ruleNames, 'ruleNames', 'must not be empty');
+      }
+      if (ruleGroups != null && ruleGroups.length != ruleNames.length) {
+        throw ArgumentError.value(
+          ruleGroups,
+          'ruleGroups',
+          'must have one entry per rule (${ruleNames.length})',
+        );
+      }
+      if (ruleGroups != null &&
+          ruleGroups.contains(raw.HEGEL_STATE_MACHINE_DONE)) {
+        // The engine reserves that value to mean "finished", so a group using
+        // it would be indistinguishable from the end of the machine.
+        throw ArgumentError.value(
+          ruleGroups,
+          'ruleGroups',
+          'must not use the reserved termination value',
+        );
+      }
+      if (minConcurrency < 1) {
+        throw RangeError.value(
+          minConcurrency,
+          'minConcurrency',
+          'must be >= 1',
+        );
+      }
+      if (maxConcurrency < minConcurrency) {
+        throw ArgumentError.value(
+          maxConcurrency,
+          'maxConcurrency',
+          'is below minConcurrency ($minConcurrency)',
+        );
+      }
+
+      return using((Arena arena) {
+        final rules = toStringArray(arena, ruleNames, 'ruleNames');
+        final invariants = toStringArray(
+          arena,
+          invariantNames,
+          'invariantNames',
+        );
+        final groups = arena<ffi.Int64>(ruleNames.length);
+        for (var i = 0; i < ruleNames.length; i++) {
+          groups[i] = ruleGroups?[i] ?? 0;
+        }
+
+        final out = arena<ffi.Pointer<raw.hegel_state_machine_t>>();
+        final concurrency = arena<ffi.Int64>();
+        session.check(
+          session.bindings.hegel_new_state_machine(
+            session.context,
+            handle,
+            rules.data,
+            groups,
+            ruleNames.length,
+            invariants.data,
+            invariantNames.length,
+            minConcurrency,
+            maxConcurrency,
+            out,
+            concurrency,
+          ),
+          'hegel_new_state_machine',
+        );
+        return StateMachine(session, out.value, concurrency.value);
+      });
+    });
+  }
+
+  /// An address for this handle, to hand to a worker isolate.
+  ///
+  /// Conveys no ownership: this wrapper still frees the handle, and must
+  /// outlive every borrower.
+  @internal
+  HandleToken get token => HandleToken(handle.address);
+
+  /// Reconstructs a borrowed view of a test case in another isolate.
+  ///
+  /// The view gets its own family state, since a Dart object cannot be shared
+  /// across isolates. Cancelling a case whose clones are being driven
+  /// elsewhere therefore needs an explicit message; the abort latch only
+  /// covers handles within one isolate.
+  @internal
+  static TestCase adopt(Libhegel session, HandleToken token) => TestCase(
+    session,
+    ffi.Pointer<raw.hegel_test_case_t>.fromAddress(token.address),
+    TestCaseFamily(),
+    borrowed: true,
+  );
+
+  /// Creates a set of variable identifiers the engine can choose among.
+  Pool newPool() {
+    return _guarded(() {
+      final out = calloc<ffi.Pointer<raw.hegel_pool_t>>();
+      try {
+        session.check(
+          session.bindings.hegel_new_pool(session.context, handle, out),
+          'hegel_new_pool',
+        );
+        return Pool(session, out.value);
+      } finally {
+        calloc.free(out);
+      }
+    });
+  }
+
+  /// Opens a span grouping the draws made until [stopSpan].
+  ///
+  /// Spans tell the shrinker which draws belong together, so it can delete or
+  /// simplify a whole compound value rather than picking at its pieces. Every
+  /// compound generator should wrap itself in one.
+  void startSpan(SpanLabel label) {
+    _guarded(() {
+      session.check(
+        session.bindings.hegel_start_span(session.context, handle, label.value),
+        'hegel_start_span',
+      );
+    });
+  }
+
+  /// Closes the most recently opened span.
+  ///
+  /// With [discard] the span is marked rejected -- a filter that did not
+  /// hold -- and the engine retries from where it opened.
+  ///
+  /// Unlike a draw, this is a no-op once the case has been aborted rather than
+  /// an error. Spans are closed from `finally` blocks while the stack unwinds,
+  /// and that unwinding must not itself raise.
+  void stopSpan({bool discard = false}) {
+    if (_disposed || family.completed || family.abort != null) return;
+    session.check(
+      session.bindings.hegel_stop_span(session.context, handle, discard),
+      'hegel_stop_span',
+    );
+  }
+
+  /// Runs [body] inside a span labelled [label].
+  ///
+  /// Closes the span however [body] ends, which is the reason [stopSpan]
+  /// tolerates an aborted case.
+  T span<T>(SpanLabel label, T Function() body) {
+    startSpan(label);
+    try {
+      return body();
+    } finally {
+      stopSpan();
+    }
   }
 
   /// Draws the sixteen bytes of a UUID, most significant first.
@@ -716,7 +951,7 @@ final class TestCase implements ffi.Finalizable {
   /// Idempotent. Each handle holds one reference to the underlying case; the
   /// case itself is released when the last one goes.
   void dispose() {
-    if (_disposed) return;
+    if (_disposed || borrowed) return;
     _disposed = true;
     session.bindings.hegel_test_case_free(session.context, _handle);
   }
