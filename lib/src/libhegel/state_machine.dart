@@ -67,7 +67,7 @@ final class StateMachine implements ffi.Finalizable {
 
   /// An address for this machine, to hand to a worker isolate.
   @internal
-  HandleToken get token => HandleToken(_handle.address);
+  HandleToken get token => HandleToken(_live.address);
 
   /// Whether [dispose] has been called.
   bool get isDisposed => _disposed;

@@ -155,10 +155,62 @@ void main() {
 
     expect(run.nextTestCase, throwsStateError);
     expect(seen, isA<StateError>());
-    expect(
-      (seen! as StateError).message,
-      contains('already inside an engine call'),
-    );
+    expect((seen! as StateError).message, contains('cannot pull a test case'));
+  });
+
+  group('re-entering the run from the callback', () {
+    // Every one of these frees or mutates a run the engine is still executing
+    // in. Left unguarded, disposing this way crashed the process outright
+    // rather than raising, because the callable being closed is the one
+    // currently running.
+    test('is refused for dispose', () {
+      late Run run;
+      Object? seen;
+      run = Run.start(
+        verbose,
+        session: session,
+        onOutput: (String line) {
+          try {
+            run.dispose();
+          } on Object catch (error) {
+            seen ??= error;
+          }
+        },
+      );
+      addTearDown(run.dispose);
+
+      final testCase = run.nextTestCase();
+      expect(seen, isA<StateError>());
+      expect((seen! as StateError).message, contains('cannot dispose'));
+      expect(run.isDisposed, isFalse, reason: 'the run survived intact');
+      testCase
+        ?..markComplete(TestCaseStatus.valid)
+        ..dispose();
+    });
+
+    test('is refused for reading the result', () {
+      late Run run;
+      Object? seen;
+      run = Run.start(
+        verbose,
+        session: session,
+        onOutput: (String line) {
+          try {
+            run.result();
+          } on Object catch (error) {
+            seen ??= error;
+          }
+        },
+      );
+      addTearDown(run.dispose);
+
+      final testCase = run.nextTestCase();
+      expect(seen, isA<StateError>());
+      expect((seen! as StateError).message, contains('cannot read the result'));
+      testCase
+        ?..markComplete(TestCaseStatus.valid)
+        ..dispose();
+    });
   });
 
   test('a replay can capture its own output', () {

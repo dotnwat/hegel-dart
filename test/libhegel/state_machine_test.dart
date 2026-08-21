@@ -207,6 +207,22 @@ void main() {
       testCase.markComplete(TestCaseStatus.valid);
     });
 
+    // A token names a live handle. Minting one from a disposed wrapper would
+    // hand a worker a dangling pointer, which native calls would follow.
+    test('a disposed owner cannot mint a token', () {
+      final run = Run.start(settings, session: session);
+      addTearDown(run.dispose);
+      final testCase = run.nextTestCase()!;
+
+      final machine = testCase.newStateMachine(ruleNames: rules)..dispose();
+      expect(() => machine.token, throwsStateError);
+
+      testCase
+        ..markComplete(TestCaseStatus.valid)
+        ..dispose();
+      expect(() => testCase.token, throwsStateError);
+    });
+
     // A borrowed view is what a worker isolate gets; it must never free a
     // handle the coordinator still owns.
     test('a borrowed view never frees the handle', () {

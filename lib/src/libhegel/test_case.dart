@@ -448,7 +448,7 @@ final class TestCase implements ffi.Finalizable {
   /// Conveys no ownership: this wrapper still frees the handle, and must
   /// outlive every borrower.
   @internal
-  HandleToken get token => HandleToken(_handle.address);
+  HandleToken get token => HandleToken(handle.address);
 
   /// Reconstructs a borrowed view of a test case in another isolate.
   ///

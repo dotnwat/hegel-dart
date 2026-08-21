@@ -140,13 +140,17 @@ final class Run implements ffi.Finalizable {
   /// and the ABI forbids calling back into the same run from there. This is
   /// checked always rather than behind an assert, because in a release build
   /// the same mistake is undefined behaviour instead of an error.
-  void _enter() {
+  void _refuseReentry(String action) {
     if (_inEngineCall) {
       throw StateError(
-        'this Run is already inside an engine call; the output callback must '
-        'not call back into the run it belongs to',
+        'cannot $action while this Run is inside an engine call; the output '
+        'callback must not call back into the run it belongs to',
       );
     }
+  }
+
+  void _enter() {
+    _refuseReentry('pull a test case');
     _inEngineCall = true;
   }
 
@@ -234,6 +238,7 @@ final class Run implements ffi.Finalizable {
   /// Throws [StateError] until [nextTestCase] has reported the run over. Each
   /// call produces a separate snapshot that outlives this run.
   RunResult result() {
+    _refuseReentry('read the result');
     if (_state == _RunState.disposed) {
       throw StateError('this Run has been disposed');
     }
@@ -260,6 +265,11 @@ final class Run implements ffi.Finalizable {
   /// Idempotent. Leaving the loop early is allowed: the engine marks any
   /// outstanding case complete and drops the rest of its exploration.
   void dispose() {
+    // Not merely a lifecycle question: disposing from inside the callback
+    // frees the run the engine is still executing in and closes the callable
+    // that is running, which the ABI leaves undefined. It crashes the process
+    // rather than raising, so this refuses before touching anything.
+    _refuseReentry('dispose');
     if (_state == _RunState.disposed) return;
     _state = _RunState.disposed;
     // Freeing the run may still emit, so the callable outlives the free.
