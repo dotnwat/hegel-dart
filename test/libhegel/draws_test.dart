@@ -14,6 +14,7 @@ import 'package:hegel/src/libhegel/version.g.dart';
 import 'package:test/test.dart';
 
 import '../support/fake_bindings.dart';
+import '../support/property_driver.dart';
 
 Settings settingsFor({int testCases = 50, int seed = 42}) => Settings(
   testCases: testCases,
@@ -21,7 +22,7 @@ Settings settingsFor({int testCases = 50, int seed = 42}) => Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 /// A test case backed by a fake, for the paths a real engine will not take

@@ -1,0 +1,10 @@
+# Tests that cost real wall-clock time rather than CPU. The engine's TooSlow
+# health check only fires after a thirty-second threshold, so driving it takes
+# thirty seconds no matter how the test is written.
+#
+# CI runs everything, including these. The local loop and the pre-commit hook
+# skip them, because a thirty-second wait on every commit is the kind of thing
+# people work around by not committing.
+tags:
+  slow:
+    timeout: 3x

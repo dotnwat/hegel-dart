@@ -7,6 +7,7 @@ import 'package:hegel/src/libhegel/version.g.dart';
 import 'package:test/test.dart';
 
 import '../support/fake_bindings.dart';
+import '../support/property_driver.dart';
 
 /// Names of the setter calls a fake saw, in order.
 List<String> settersCalledFor(Settings settings) {
@@ -225,7 +226,7 @@ void main() {
         database: Database.disabled,
         databaseKey: 'settings-test',
         phases: {Phase.generate},
-        suppressHealthChecks: everyHealthCheck,
+        suppressHealthChecks: machineSpeedChecks,
         verbosity: Verbosity.quiet,
       );
       expect(

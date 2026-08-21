@@ -32,7 +32,7 @@ Settings settingsFor({
   databaseKey: key,
   phases: phases,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 /// Runs one failing property to completion in a fresh isolate and returns the

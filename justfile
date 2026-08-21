@@ -1,5 +1,6 @@
 # Local convenience wrapper. CI runs the same dart commands directly, so a
-# green `just` here means a green CI job.
+# green `just` here means a green CI job -- with one exception: `test` skips
+# the tests tagged slow, which CI runs. Use `test-all` to match CI exactly.
 
 # Everything CI checks.
 default: lint test
@@ -9,8 +10,13 @@ lint:
     dart format --output=none --set-exit-if-changed .
     dart analyze --fatal-infos
 
-# The test suite.
+# The test suite, minus tests that spend wall-clock time waiting on a
+# threshold. See dart_test.yaml.
 test:
+    dart test --exclude-tags slow
+
+# Everything, including the slow tests. What CI runs.
+test-all:
     dart test
 
 # Measure coverage and check it against the floors in tool/check_coverage.dart.

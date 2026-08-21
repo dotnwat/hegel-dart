@@ -10,6 +10,8 @@ import 'package:hegel/src/libhegel/state_machine.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
+
 const Settings settings = Settings(
   testCases: 20,
   seed: 59,
@@ -17,7 +19,7 @@ const Settings settings = Settings(
   database: Database.disabled,
   verbosity: Verbosity.quiet,
   statefulStepCount: 12,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 const List<String> rules = <String>['push', 'pop', 'clear'];
