@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
 
@@ -38,6 +39,15 @@ enum TestCaseStatus {
 final class TestCaseFamily {
   /// Whether any handle has already reported this case complete.
   bool completed = false;
+
+  /// The signal that ended this case early, once one has been raised.
+  ///
+  /// Held per case rather than per handle so a clone cannot keep drawing from
+  /// a case the engine has already given up on. Only meaningful within one
+  /// isolate: cancelling a case whose clones are being driven elsewhere needs
+  /// an explicit message, which is the runner's problem rather than this
+  /// layer's.
+  Object? abort;
 }
 
 /// A handle onto one test case.
@@ -147,6 +157,137 @@ final class TestCase implements ffi.Finalizable {
     });
     family.completed = true;
     onComplete?.call();
+  }
+
+  /// Runs [draw], latching whichever signal ends the case.
+  ///
+  /// Once a case has been aborted, later draws re-raise the *same* signal
+  /// without calling the engine. Re-raising StopTest unconditionally would be
+  /// wrong: a draw made while an assumption failure unwinds would turn an
+  /// invalid case into an overrun one, and the runner would report the wrong
+  /// outcome.
+  T _guarded<T>(T Function() draw) {
+    if (family.abort case final signal?) throw signal;
+    try {
+      return draw();
+    } on StopTest catch (signal) {
+      family.abort = signal;
+      rethrow;
+    } on AssumptionFailed catch (signal) {
+      family.abort = signal;
+      rethrow;
+    }
+  }
+
+  /// Draws a boolean that is true with probability [probability].
+  ///
+  /// [forced] overrides the draw without consuming entropy, which the engine
+  /// uses when replaying.
+  bool drawBoolean({double probability = 0.5, bool? forced}) {
+    if (probability < 0 || probability > 1 || probability.isNaN) {
+      throw RangeError.value(probability, 'probability', 'must be in [0, 1]');
+    }
+    return _guarded(() {
+      final out = calloc<ffi.Bool>();
+      try {
+        session.check(
+          session.bindings.hegel_generate_boolean(
+            session.context,
+            handle,
+            probability,
+            forced ?? false,
+            forced != null,
+            out,
+          ),
+          'hegel_generate_boolean',
+        );
+        return out.value;
+      } finally {
+        calloc.free(out);
+      }
+    });
+  }
+
+  /// Draws an integer in the inclusive range [min] to [max].
+  int drawInteger({required int min, required int max}) {
+    if (min > max) {
+      throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+    }
+    return _guarded(() {
+      final out = calloc<ffi.Int64>();
+      try {
+        session.check(
+          session.bindings.hegel_generate_integer(
+            session.context,
+            handle,
+            min,
+            max,
+            out,
+          ),
+          'hegel_generate_integer',
+        );
+        return out.value;
+      } finally {
+        calloc.free(out);
+      }
+    });
+  }
+
+  /// Draws a floating-point number.
+  ///
+  /// [width] is 32 or 64. Bounds are inclusive unless excluded, and may be
+  /// infinite for an open end. [smallestNonzeroMagnitude] suppresses nonzero
+  /// magnitudes below it; the default is the smallest subnormal at [width],
+  /// which suppresses nothing.
+  double drawFloat({
+    int width = 64,
+    double min = double.negativeInfinity,
+    double max = double.infinity,
+    bool allowNan = false,
+    bool allowInfinity = false,
+    bool excludeMin = false,
+    bool excludeMax = false,
+    double? smallestNonzeroMagnitude,
+  }) {
+    if (width != 32 && width != 64) {
+      throw ArgumentError.value(width, 'width', 'must be 32 or 64');
+    }
+    if (min > max) {
+      throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+    }
+    final smallest =
+        smallestNonzeroMagnitude ?? (width == 32 ? 1.4e-45 : 5e-324);
+    if (smallest <= 0 || !smallest.isFinite) {
+      throw ArgumentError.value(
+        smallest,
+        'smallestNonzeroMagnitude',
+        'must be positive and finite',
+      );
+    }
+    return _guarded(() {
+      final out = calloc<ffi.Double>();
+      try {
+        session.check(
+          session.bindings.hegel_generate_float(
+            session.context,
+            handle,
+            width,
+            min,
+            max,
+            allowNan,
+            allowInfinity,
+            excludeMin,
+            excludeMax,
+            smallest,
+            out,
+          ),
+          'hegel_generate_float',
+        );
+        return out.value;
+      } finally {
+        calloc.free(out);
+      }
+    });
   }
 
   /// Releases this handle.
