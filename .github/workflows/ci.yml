@@ -48,10 +48,26 @@ jobs:
         run: zizmor --format plain .github/
 
   test:
-    name: test
-    runs-on: ubuntu-latest
+    name: "test (${{ matrix.target }})"
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    strategy:
+      # One platform failing should not hide the others: the whole point of
+      # the matrix is to learn which targets are broken, not just the first.
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-14
+          - target: windows-x64
+            runner: windows-2025
+          - target: windows-arm64
+            runner: windows-11-arm
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -63,13 +79,17 @@ jobs:
 
       # The build hook downloads the pinned engine on a cold cache. Keying on
       # the generated pin means moving the pin misses the cache, which is
-      # exactly what should happen.
+      # exactly what should happen. Both paths are listed because the hook
+      # derives its cache root from the host: ~/.cache on POSIX, LOCALAPPDATA
+      # on Windows. A path that does not exist on a given runner is ignored.
       - name: Cache the pinned libhegel engine
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/hegel-dart/natives
+          path: |
+            ~/.cache/hegel-dart/natives
+            ~/AppData/Local/hegel-dart/natives
           key: >-
-            libhegel-${{ runner.os }}-${{ runner.arch }}-${{
+            libhegel-${{ matrix.target }}-${{
             hashFiles('lib/src/libhegel/version.g.dart') }}
 
       - run: dart pub get
