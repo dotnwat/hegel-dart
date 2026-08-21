@@ -57,6 +57,99 @@ library;
 export 'src/libhegel/libhegel.dart';
 ''';
 
+/// A file dartdoc always writes, used to recognise its own output.
+///
+/// Emptying a directory is only safe if we are sure we made it.
+const String _dartdocMarker = 'index.json';
+
+/// Resolves [value] against [root] using filesystem rules.
+///
+/// Not URI resolution: `Uri.resolve` reads a Windows path like `C:\docs` as a
+/// URI with scheme `c`, and a UNC path as a host, so both are rejected before
+/// dartdoc ever runs.
+Directory resolveOutputDirectory(Directory root, String value) {
+  if (value.trim().isEmpty) {
+    throw ArgumentError.value(value, '--output', 'must not be empty');
+  }
+  // Separators are normalised so that a value written with forward slashes
+  // still compares against paths built with the platform's separator.
+  final normalised = Platform.isWindows ? value.replaceAll('/', r'\') : value;
+  final given = Directory(normalised);
+  return given.isAbsolute
+      ? given
+      : Directory('${root.path}${Platform.pathSeparator}$normalised');
+}
+
+/// The canonical form of [path], symlinks resolved, whether or not it exists.
+///
+/// `resolveSymbolicLinksSync` only works on something that is already there,
+/// so a directory yet to be created would stay unresolved while the package
+/// root does not. On macOS, where the temporary directory is reached through
+/// a symlink, the two then never compare equal and every check below passes
+/// silently -- which is exactly how `--output lib/nested` slipped through.
+String canonicalPath(String path) {
+  final separator = Platform.pathSeparator;
+  var directory = Directory(path).absolute;
+  final missing = <String>[];
+  while (!directory.existsSync()) {
+    final parent = directory.parent;
+    if (parent.path == directory.path) break;
+    missing.insert(
+      0,
+      directory.path
+          .substring(parent.path.length)
+          .replaceAll(RegExp(r'^[\\/]+'), ''),
+    );
+    directory = parent;
+  }
+  final resolved = directory.existsSync()
+      ? directory.resolveSymbolicLinksSync()
+      : directory.path;
+  return <String>[resolved, ...missing].join(separator);
+}
+
+/// Throws unless [output] is a directory this tool may empty.
+///
+/// The check exists because emptying it is destructive and the path comes
+/// from an argument. Before this, `--output .` erased the checkout including
+/// .git, and `--output ..` erased everything beside it.
+void checkSafeToEmpty(Directory root, Directory output) {
+  final target = canonicalPath(output.path);
+  final base = canonicalPath(root.path);
+  final separator = Platform.pathSeparator;
+
+  if (target == base) {
+    throw ArgumentError.value(output.path, '--output', 'is the package itself');
+  }
+  if (!'$base$separator'.startsWith('$target$separator')) {
+    // Not an ancestor of the package: fine so far.
+  } else {
+    throw ArgumentError.value(output.path, '--output', 'contains the package');
+  }
+  for (final protected in <String>['lib', 'test', 'tool', 'hook', '.git']) {
+    final reserved = '$base$separator$protected';
+    if (target == reserved || target.startsWith('$reserved$separator')) {
+      throw ArgumentError.value(
+        output.path,
+        '--output',
+        'is inside $protected',
+      );
+    }
+  }
+
+  final marker = File('${output.path}$separator$_dartdocMarker');
+  if (output.existsSync() &&
+      !marker.existsSync() &&
+      output.listSync().isNotEmpty) {
+    throw ArgumentError.value(
+      output.path,
+      '--output',
+      'is not empty and was not written by dartdoc; remove it by hand if it '
+          'really is a documentation directory',
+    );
+  }
+}
+
 Future<void> main(List<String> arguments) async {
   final root = Directory.fromUri(Platform.script.resolve('../'));
   final entryPoint = File.fromUri(root.uri.resolve(_entryPointPath));
@@ -74,8 +167,17 @@ Future<void> main(List<String> arguments) async {
 
   // Emptied first. dartdoc overwrites what it regenerates but leaves behind
   // pages for anything since renamed or removed, so a stale directory keeps
-  // serving documentation for API that no longer exists.
-  final outputDirectory = Directory.fromUri(root.uri.resolve(output));
+  // serving documentation for API that no longer exists. Emptying is
+  // destructive and the path is an argument, so it is checked first.
+  final Directory outputDirectory;
+  try {
+    outputDirectory = resolveOutputDirectory(root, output);
+    checkSafeToEmpty(root, outputDirectory);
+  } on ArgumentError catch (error) {
+    stderr.writeln('refusing to write documentation there: ${error.message}');
+    exitCode = 1;
+    return;
+  }
   if (outputDirectory.existsSync()) {
     outputDirectory.deleteSync(recursive: true);
   }
@@ -88,7 +190,7 @@ Future<void> main(List<String> arguments) async {
         'run',
         'dartdoc',
         '--output',
-        output,
+        outputDirectory.path,
         '--validate-links',
         '--errors',
         _fatalWarnings.join(','),
