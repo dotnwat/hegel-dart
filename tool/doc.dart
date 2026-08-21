@@ -25,18 +25,37 @@ const String _entryPointPath = 'lib/libhegel_docs.dart';
 /// It reports a broken link or an unresolved reference and then exits zero,
 /// so a gate that only checks the exit code passes on exactly the problems it
 /// was added to catch -- verified before this list existed, by breaking a
-/// reference and watching the build succeed. Every kind here means the
-/// documentation is wrong rather than merely imperfect.
+/// reference and watching the build succeed.
+///
+/// This is every kind dartdoc 9.0.9 defines, except `type-as-html`, which
+/// that version has deprecated and complains about being asked for. Listing
+/// them all is deliberate: the previous list was chosen by judgement and
+/// left out
+/// `internal-error` and `missing-from-search-index`, both of which mean
+/// generation itself went wrong and both of which dartdoc reports as mere
+/// warnings, so the gate would announce success over them.
+///
+/// dartdoc does not validate these names -- an invented one is accepted in
+/// silence -- so nothing here can catch a typo or a name dropped by a later
+/// release. That is why `dartdoc` is pinned to an exact version in
+/// pubspec.yaml rather than a range, and why bumping it means regenerating
+/// this list from that version's `PackageWarning` enum.
 const List<String> _fatalWarnings = <String>[
   'ambiguous-doc-reference',
   'ambiguous-reexport',
   'broken-link',
+  'category-order-gives-missing-package-name',
+  'deprecated',
   'duplicate-file',
+  'ignored-canonical-for',
+  'internal-error',
   'invalid-parameter',
   'missing-example-file',
   'missing-example-region',
+  'missing-from-search-index',
   'no-canonical-found',
   'no-documentable-libraries',
+  'no-library-level-docs',
   'orphaned-file',
   'tool-error',
   'unknown-file',
