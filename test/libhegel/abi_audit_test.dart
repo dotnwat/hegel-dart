@@ -33,6 +33,15 @@ Set<String> boundFunctions() {
   ).allMatches(interface).map((RegExpMatch m) => m.group(1)!).toSet();
 }
 
+/// Whether [source] contains a call to [name], as opposed to a mention of it.
+///
+/// Every call site names its function twice: once invoking it, and once as the
+/// operation string passed along for diagnostics. Searching for the bare name
+/// would therefore be satisfied by the string alone, so a binding whose call
+/// had been deleted would still look reached. Only an invocation counts.
+bool callsBinding(String source, String name) =>
+    RegExp('\\.\\s*${RegExp.escape(name)}\\s*\\(').hasMatch(source);
+
 /// Everything the safe layer says, with the raw layers left out.
 String safeLayerSource() {
   final buffer = StringBuffer();
@@ -79,13 +88,54 @@ void main() {
     );
   });
 
+  group('the reached-from check', () {
+    test('accepts an invocation', () {
+      expect(
+        callsBinding(
+          '_session.bindings.hegel_run_start(a, b);',
+          'hegel_run_start',
+        ),
+        isTrue,
+      );
+    });
+
+    // The trap this check exists to avoid: the operation string sits right
+    // beside the call, so a plain name search finds it whether or not the
+    // call is still there.
+    test('rejects a name that only appears in a diagnostic string', () {
+      expect(
+        callsBinding(
+          "session.check(code, 'hegel_run_start');",
+          'hegel_run_start',
+        ),
+        isFalse,
+      );
+      expect(
+        callsBinding(
+          '/// Wraps `hegel_run_start` for callers.',
+          'hegel_run_start',
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not mistake one name for a longer one', () {
+      expect(
+        callsBinding('bindings.hegel_pool_generate(x);', 'hegel_pool'),
+        isFalse,
+      );
+    });
+  });
+
   // The question the eager symbol check cannot answer. Resolving a symbol
   // proves the engine exports it; this proves something above actually calls
   // it, so a function cannot be bound, linked, and silently unused.
   test('every bound function is reached from the safe layer', () {
     final source = safeLayerSource();
     final unused =
-        boundFunctions().where((String name) => !source.contains(name)).toList()
+        boundFunctions()
+            .where((String name) => !callsBinding(source, name))
+            .toList()
           ..sort();
     expect(
       unused,

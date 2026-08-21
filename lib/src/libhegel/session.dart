@@ -10,6 +10,7 @@ import 'package:meta/meta.dart';
 import 'bindings.dart';
 import 'bindings.g.dart' as raw;
 import 'errors.dart';
+import 'leaks.dart';
 import 'version.g.dart';
 
 /// Whether [engine] and [pinned] agree closely enough to be used together.
@@ -41,7 +42,12 @@ bool versionsCompatible(String engine, String pinned) {
 /// dispose their handles and then their session in a `finally`; the main
 /// isolate may simply hold one for the life of the program.
 final class Libhegel {
-  Libhegel._(this.bindings, this._context, this.engineVersion);
+  Libhegel._(this.bindings, this._context, this.engineVersion) {
+    // A session owns a context, which is a handle like any other. The
+    // process-wide instance is rooted in a static and never collected; a
+    // session opened by hand and dropped is exactly what this should catch.
+    assert(trackHandle(this, 'Libhegel'));
+  }
 
   static Libhegel? _instance;
 
@@ -147,6 +153,7 @@ final class Libhegel {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     bindings.hegel_context_free(_context);
     if (identical(_instance, this)) _instance = null;
   }
