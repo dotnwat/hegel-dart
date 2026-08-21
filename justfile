@@ -18,6 +18,10 @@ coverage:
     dart run coverage:test_with_coverage --branch-coverage
     dart run tool/check_coverage.dart
 
+# Generate the API documentation into build/doc.
+docs:
+    dart run tool/doc.dart
+
 # Regenerate the raw FFI bindings from the vendored header. Needs libclang;
 # CI re-runs this and fails if the checked-in output differs.
 regen:

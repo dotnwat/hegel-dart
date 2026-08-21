@@ -28,6 +28,7 @@ dev_dependencies:
   # Pinned exactly so drift-check diffs mean an intentional generator upgrade.
   # 20.1.1 rather than 21.x: ffigen 21 depends on code_assets ^1.1.0, which
   # conflicts with the ^2.0.0 the build hook needs.
+  dartdoc: ^9.0.9
   ffigen: 20.1.1
   lints: ^6.1.0
   test: ^1.31.2
