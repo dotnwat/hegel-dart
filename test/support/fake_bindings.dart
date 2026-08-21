@@ -3,8 +3,30 @@ library;
 
 import 'dart:ffi' as ffi;
 
+import 'package:ffi/ffi.dart';
 import 'package:hegel/src/libhegel/bindings.dart';
 import 'package:hegel/src/libhegel/bindings.g.dart' as raw;
+
+/// Writes [version] into the out-parameter of a `hegel_version` call.
+///
+/// Sessions read the version while opening, so almost every fake needs this.
+void writeVersion(Invocation invocation, String version) {
+  final text = version.toNativeUtf8();
+  _versionStrings.add(text);
+  (invocation.positionalArguments.last as ffi.Pointer<ffi.Pointer<ffi.Char>>)
+      .value = text
+      .cast<ffi.Char>();
+}
+
+final List<ffi.Pointer<Utf8>> _versionStrings = <ffi.Pointer<Utf8>>[];
+
+/// Frees every string [writeVersion] allocated.
+void releaseVersionStrings() {
+  for (final text in _versionStrings) {
+    calloc.free(text);
+  }
+  _versionStrings.clear();
+}
 
 /// Turns `Symbol("hegel_version")` back into `hegel_version`.
 ///
