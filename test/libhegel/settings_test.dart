@@ -28,26 +28,30 @@ List<String> settersCalledFor(Settings settings) {
 }
 
 void main() {
-  group('flag sets', () {
-    test('combine and test for membership', () {
-      final selected = Phases.generate | Phases.shrink;
-      expect(selected.includes(Phases.generate), isTrue);
-      expect(selected.includes(Phases.shrink), isTrue);
-      expect(selected.includes(Phases.reuse), isFalse);
-      expect(Phases.all.includes(selected), isTrue);
+  group('phase and check sets', () {
+    // Sets rather than a bit-flag type so that a const Settings can name them
+    // directly; an extension type's operators are not const-evaluable.
+    test('compose inside a const Settings', () {
+      const settings = Settings(
+        phases: <Phase>{Phase.generate, Phase.shrink},
+        suppressHealthChecks: <HealthCheck>{HealthCheck.tooSlow},
+      );
+      expect(settings.phases, contains(Phase.generate));
+      expect(settings.suppressHealthChecks, contains(HealthCheck.tooSlow));
     });
 
-    test('match the ABI bit values', () {
-      expect(Phases.all.bits, 31);
-      expect((Phases.explicit | Phases.reuse).bits, 3);
-      expect(HealthChecks.all.bits, 15);
-      expect(HealthChecks.none.bits, 0);
+    test('fold to the bit masks the ABI takes', () {
+      expect(maskOf(everyPhase), 31);
+      expect(maskOf(<Phase>{Phase.explicit, Phase.reuse}), 3);
+      expect(maskOf(everyHealthCheck), 15);
+      expect(maskOf(const <Phase>{}), 0);
     });
 
-    test('health checks combine the same way', () {
-      final suppressed = HealthChecks.tooSlow | HealthChecks.filterTooMuch;
-      expect(suppressed.includes(HealthChecks.tooSlow), isTrue);
-      expect(suppressed.includes(HealthChecks.testCasesTooLarge), isFalse);
+    test('name every value the ABI defines', () {
+      expect(Phase.values, hasLength(5));
+      expect(everyPhase, Phase.values.toSet());
+      expect(HealthCheck.values, hasLength(4));
+      expect(everyHealthCheck, HealthCheck.values.toSet());
     });
   });
 
@@ -87,8 +91,8 @@ void main() {
             derandomize: true,
             database: Database.disabled,
             databaseKey: 'suite/case',
-            phases: Phases.generate,
-            suppressHealthChecks: HealthChecks.tooSlow,
+            phases: {Phase.generate},
+            suppressHealthChecks: {HealthCheck.tooSlow},
             reportMultipleFailures: true,
             verbosity: Verbosity.quiet,
           ),
@@ -167,8 +171,8 @@ void main() {
         derandomize: true,
         database: Database.disabled,
         databaseKey: 'settings-test',
-        phases: Phases.generate,
-        suppressHealthChecks: HealthChecks.all,
+        phases: {Phase.generate},
+        suppressHealthChecks: everyHealthCheck,
         verbosity: Verbosity.quiet,
       );
       expect(
