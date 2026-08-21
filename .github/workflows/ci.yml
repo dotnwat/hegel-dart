@@ -142,3 +142,44 @@ jobs:
           [ -f "$binary.exe" ] && binary="$binary.exe"
           ls build/smoke/bundle/lib
           "$binary"
+
+  # Neither the vendored header nor the generated bindings may drift from the
+  # pin without someone committing the change: re-fetch the header and licence
+  # at the pinned tag, regenerate the bindings, and fail on any difference.
+  drift:
+    name: drift
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      # ffigen parses the header with libclang, which the runner image does
+      # not ship a development package for.
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/hegel-dart/natives
+          key: >-
+            libhegel-drift-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - run: dart pub get
+
+      - name: Re-fetch the vendored header and licence at the pinned tag
+        run: dart run tool/update_libhegel.dart --artifacts-only
+
+      - name: Regenerate the bindings
+        run: dart run ffigen --config ffigen.yaml
+
+      - name: Fail on any drift
+        run: git diff --exit-code
