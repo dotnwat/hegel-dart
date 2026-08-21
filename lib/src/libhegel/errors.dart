@@ -127,13 +127,26 @@ Never throwForResult(int code, String operation, String message) {
   throw HegelException(operation, code, message);
 }
 
+/// Whether [code] is a control-flow signal rather than an error.
+///
+/// The two signals carry no message, so nothing should pay to fetch one.
+bool isControlFlowResult(int code) =>
+    code == raw.hegel_result_t.HEGEL_E_STOP_TEST ||
+    code == raw.hegel_result_t.HEGEL_E_ASSUME;
+
 /// Returns normally when [code] is success, and otherwise raises through
 /// [throwForResult].
 ///
-/// [describeError] supplies the engine's diagnostic and is consulted only on
-/// the failure path: reading it costs a call into the engine, and its result
-/// is invalidated by the next call on the same context.
+/// [describeError] supplies the engine's diagnostic and is consulted only when
+/// the result is a genuine error. Reading it costs a call into the engine plus
+/// a decode, its result is invalidated by the next call on the same context,
+/// and a control-flow signal would discard it anyway -- on a path taken once
+/// per rejected draw.
 void checkResult(int code, String operation, String Function() describeError) {
   if (code == raw.hegel_result_t.HEGEL_OK) return;
-  throwForResult(code, operation, describeError());
+  throwForResult(
+    code,
+    operation,
+    isControlFlowResult(code) ? '' : describeError(),
+  );
 }

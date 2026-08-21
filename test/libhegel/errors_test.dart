@@ -156,18 +156,34 @@ void main() {
       expect(reads, 1);
     });
 
+    // This test previously asserted reads == 1 under this very name: it
+    // described the behaviour it wanted and then pinned the opposite, so the
+    // wasted call it existed to prevent went unnoticed.
     test('does not consult the engine for control-flow signals', () {
-      // StopTest is raised per draw in hot loops; paying for a diagnostic
-      // there would be wasteful and the message is never used.
       var reads = 0;
+      String read() {
+        reads++;
+        return 'unused';
+      }
+
       expect(
-        () => checkResult(raw.hegel_result_t.HEGEL_E_STOP_TEST, 'draw', () {
-          reads++;
-          return 'unused';
-        }),
+        () => checkResult(raw.hegel_result_t.HEGEL_E_STOP_TEST, 'draw', read),
         throwsA(isA<StopTest>()),
       );
-      expect(reads, 1);
+      expect(
+        () => checkResult(raw.hegel_result_t.HEGEL_E_ASSUME, 'draw', read),
+        throwsA(isA<AssumptionFailed>()),
+      );
+      // Both signals are raised per draw in hot loops, carry no message, and
+      // would discard a diagnostic anyway.
+      expect(reads, 0);
+    });
+
+    test('classifies which codes are control flow', () {
+      expect(isControlFlowResult(raw.hegel_result_t.HEGEL_E_STOP_TEST), isTrue);
+      expect(isControlFlowResult(raw.hegel_result_t.HEGEL_E_ASSUME), isTrue);
+      expect(isControlFlowResult(raw.hegel_result_t.HEGEL_E_BACKEND), isFalse);
+      expect(isControlFlowResult(raw.hegel_result_t.HEGEL_OK), isFalse);
     });
   });
 
