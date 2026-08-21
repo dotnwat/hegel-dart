@@ -9,6 +9,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'session.dart';
 import 'state_machine.dart' show HandleToken;
 import 'test_case.dart';
@@ -26,7 +27,9 @@ import 'test_case.dart';
 /// them, so it can be borrowed the way a state machine can.
 final class Pool implements ffi.Finalizable {
   @internal
-  Pool(this._session, this._handle, {this.isBorrowed = false});
+  Pool(this._session, this._handle, {this.isBorrowed = false}) {
+    assert(isBorrowed || trackHandle(this, 'Pool'));
+  }
 
   /// Reconstructs a borrowed view of a pool in another isolate.
   ///
@@ -114,6 +117,7 @@ final class Pool implements ffi.Finalizable {
   void dispose() {
     if (_disposed || isBorrowed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_pool_free(_session.context, _handle);
   }
 }

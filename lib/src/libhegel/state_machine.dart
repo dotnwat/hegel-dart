@@ -9,6 +9,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'session.dart';
 import 'test_case.dart';
 
@@ -34,7 +35,9 @@ final class StateMachine implements ffi.Finalizable {
     this._handle,
     this.concurrency, {
     this.isBorrowed = false,
-  });
+  }) {
+    assert(isBorrowed || trackHandle(this, 'StateMachine'));
+  }
 
   /// Reconstructs a borrowed view of a machine in another isolate.
   ///
@@ -160,6 +163,7 @@ final class StateMachine implements ffi.Finalizable {
   void dispose() {
     if (_disposed || isBorrowed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_state_machine_free(_session.context, _handle);
   }
 }

@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'marshal.dart';
 import 'session.dart';
 import 'test_case.dart';
@@ -29,7 +30,9 @@ import 'test_case.dart';
 /// its sequence.
 final class Collection implements ffi.Finalizable {
   @internal
-  Collection(this._session, this._handle);
+  Collection(this._session, this._handle) {
+    assert(trackHandle(this, 'Collection'));
+  }
 
   final Libhegel _session;
   final ffi.Pointer<raw.hegel_collection_t> _handle;
@@ -89,6 +92,7 @@ final class Collection implements ffi.Finalizable {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_collection_free(_session.context, _handle);
   }
 }

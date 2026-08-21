@@ -6,6 +6,7 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'marshal.dart';
 import 'run_result.dart';
 import 'session.dart';
@@ -85,7 +86,9 @@ final class OutputSink {
 /// ABI allows only one thread at a time on a run, which a single-threaded
 /// isolate satisfies by construction.
 final class Run implements ffi.Finalizable {
-  Run._(this._session, this._handle, this._sink);
+  Run._(this._session, this._handle, this._sink) {
+    assert(trackHandle(this, 'Run'));
+  }
 
   /// Starts a run configured by [settings].
   ///
@@ -272,6 +275,7 @@ final class Run implements ffi.Finalizable {
     _refuseReentry('dispose');
     if (_state == _RunState.disposed) return;
     _state = _RunState.disposed;
+    assert(releaseHandle(this));
     // Freeing the run may still emit, so the callable outlives the free.
     _session.bindings.hegel_run_free(_session.context, _handle);
     _sink?.close();
