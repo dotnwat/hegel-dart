@@ -18,6 +18,8 @@ library;
 
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 const String _entryPointPath = 'lib/libhegel_docs.dart';
 
 /// Warnings dartdoc must treat as failures.
@@ -76,10 +78,20 @@ library;
 export 'src/libhegel/libhegel.dart';
 ''';
 
-/// A file dartdoc always writes, used to recognise its own output.
+/// Written into the output directory once a run succeeds, and the only thing
+/// that makes a non-empty directory safe to empty on a later run.
 ///
-/// Emptying a directory is only safe if we are sure we made it.
-const String _dartdocMarker = 'index.json';
+/// It used to be `index.json`, on the reasoning that dartdoc always writes
+/// one. But plenty of unrelated directories contain an `index.json` -- web
+/// roots, data dumps -- and treating one as proof of ownership meant
+/// `--output some/web/dir` would delete somebody's work. Recognising output
+/// that looks like ours is not the same as recognising output that is ours,
+/// so this file is ours and nothing else claims it.
+///
+/// It cannot be written before dartdoc runs: `unknown-file` is one of the
+/// warnings we make fatal, and dartdoc counts anything in the tree it did not
+/// write, dotfiles included.
+const String _ownershipMarker = '.hegel-doc-output';
 
 /// Resolves [value] against [root] using filesystem rules.
 ///
@@ -99,72 +111,103 @@ Directory resolveOutputDirectory(Directory root, String value) {
       : Directory('${root.path}${Platform.pathSeparator}$normalised');
 }
 
-/// The canonical form of [path], symlinks resolved, whether or not it exists.
+/// [path] with `.` and `..` collapsed, made absolute, and case-folded where
+/// the platform ignores case.
 ///
-/// `resolveSymbolicLinksSync` only works on something that is already there,
-/// so a directory yet to be created would stay unresolved while the package
-/// root does not. On macOS, where the temporary directory is reached through
-/// a symlink, the two then never compare equal and every check below passes
-/// silently -- which is exactly how `--output lib/nested` slipped through.
-String canonicalPath(String path) {
-  final separator = Platform.pathSeparator;
-  var directory = Directory(path).absolute;
-  final missing = <String>[];
-  while (!directory.existsSync()) {
-    final parent = directory.parent;
-    if (parent.path == directory.path) break;
-    missing.insert(
-      0,
-      directory.path
-          .substring(parent.path.length)
-          .replaceAll(RegExp(r'^[\\/]+'), ''),
-    );
-    directory = parent;
+/// Purely lexical, so it works on a directory that does not exist yet. That
+/// is what the physical form below cannot do, and why both are needed:
+/// `--output missing/../lib` names lib the moment the operating system
+/// resolves it, but every character comparison against "lib" misses.
+String lexicalPath(String path) => p.canonicalize(path);
+
+/// The path the operating system will actually use, symlinks resolved.
+///
+/// Only answerable once the directory exists, which is why [prepareOutput]
+/// creates it before the checks run.
+String physicalPath(Directory directory) =>
+    p.canonicalize(directory.resolveSymbolicLinksSync());
+
+/// Creates [output] and every missing directory above it, returning the ones
+/// it had to make so a refusal can undo them.
+///
+/// Creating a directory is cheap and reversible; deleting one is neither,
+/// which is the whole reason the order runs this way round. Resolving
+/// symlinks is the only way to learn the path dartdoc will really write to,
+/// and it only works on something that is already there.
+List<Directory> prepareOutput(Directory output) {
+  final created = <Directory>[];
+  var probe = output.absolute;
+  while (!probe.existsSync()) {
+    created.insert(0, probe);
+    final parent = probe.parent;
+    if (parent.path == probe.path) break;
+    probe = parent;
   }
-  final resolved = directory.existsSync()
-      ? directory.resolveSymbolicLinksSync()
-      : directory.path;
-  return <String>[resolved, ...missing].join(separator);
+  output.createSync(recursive: true);
+  return created;
+}
+
+/// Removes the directories [prepareOutput] made, innermost first, stopping at
+/// the first that is not empty.
+void undoPrepare(List<Directory> created) {
+  for (final directory in created.reversed) {
+    if (!directory.existsSync()) continue;
+    if (directory.listSync().isNotEmpty) return;
+    directory.deleteSync();
+  }
+}
+
+void _refuseIfRelated(String display, String base, String target) {
+  final separator = Platform.pathSeparator;
+  if (target == base) {
+    throw ArgumentError.value(display, '--output', 'is the package itself');
+  }
+  if ('$base$separator'.startsWith('$target$separator')) {
+    throw ArgumentError.value(display, '--output', 'contains the package');
+  }
+  for (final protected in <String>['lib', 'test', 'tool', 'hook', '.git']) {
+    final reserved = '$base$separator$protected';
+    if (target == reserved || target.startsWith('$reserved$separator')) {
+      throw ArgumentError.value(display, '--output', 'is inside $protected');
+    }
+  }
 }
 
 /// Throws unless [output] is a directory this tool may empty.
 ///
 /// The check exists because emptying it is destructive and the path comes
-/// from an argument. Before this, `--output .` erased the checkout including
+/// from an argument. Before it, `--output .` erased the checkout including
 /// .git, and `--output ..` erased everything beside it.
+///
+/// Every lexical and physical form of both paths is compared against every
+/// form of the other, because each of the two holes found so far lived in a
+/// gap between one form and another: a symlinked package root, and dot
+/// segments in a suffix that did not exist yet. Comparing one pair is what
+/// let each of them through.
 void checkSafeToEmpty(Directory root, Directory output) {
-  final target = canonicalPath(output.path);
-  final base = canonicalPath(root.path);
-  final separator = Platform.pathSeparator;
+  final bases = <String>{lexicalPath(root.path)};
+  if (root.existsSync()) bases.add(physicalPath(root));
+  final targets = <String>{lexicalPath(output.path)};
+  if (output.existsSync()) targets.add(physicalPath(output));
 
-  if (target == base) {
-    throw ArgumentError.value(output.path, '--output', 'is the package itself');
-  }
-  if (!'$base$separator'.startsWith('$target$separator')) {
-    // Not an ancestor of the package: fine so far.
-  } else {
-    throw ArgumentError.value(output.path, '--output', 'contains the package');
-  }
-  for (final protected in <String>['lib', 'test', 'tool', 'hook', '.git']) {
-    final reserved = '$base$separator$protected';
-    if (target == reserved || target.startsWith('$reserved$separator')) {
-      throw ArgumentError.value(
-        output.path,
-        '--output',
-        'is inside $protected',
-      );
+  for (final base in bases) {
+    for (final target in targets) {
+      _refuseIfRelated(output.path, base, target);
     }
   }
 
-  final marker = File('${output.path}$separator$_dartdocMarker');
+  final marker = File(
+    '${output.path}${Platform.pathSeparator}$_ownershipMarker',
+  );
   if (output.existsSync() &&
       !marker.existsSync() &&
       output.listSync().isNotEmpty) {
     throw ArgumentError.value(
       output.path,
       '--output',
-      'is not empty and was not written by dartdoc; remove it by hand if it '
-          'really is a documentation directory',
+      'is not empty and this tool did not write it. Delete it by hand if it '
+          'really is a documentation directory -- output from before this '
+          'check existed carries no marker and is refused once, on purpose',
     );
   }
 }
@@ -189,11 +232,22 @@ Future<void> main(List<String> arguments) async {
   // serving documentation for API that no longer exists. Emptying is
   // destructive and the path is an argument, so it is checked first.
   final Directory outputDirectory;
+  List<Directory> created = <Directory>[];
   try {
-    outputDirectory = resolveOutputDirectory(root, output);
+    // Collapsed before anything is created, so that a path written with dot
+    // segments creates the directory it actually names and not the ones it
+    // spells on the way there.
+    outputDirectory = Directory(
+      lexicalPath(resolveOutputDirectory(root, output).path),
+    );
+    created = prepareOutput(outputDirectory);
     checkSafeToEmpty(root, outputDirectory);
   } on ArgumentError catch (error) {
-    stderr.writeln('refusing to write documentation there: ${error.message}');
+    undoPrepare(created);
+    stderr.writeln(
+      'refusing to write documentation to ${error.invalidValue}: '
+      '${error.message}',
+    );
     exitCode = 1;
     return;
   }
@@ -225,7 +279,22 @@ Future<void> main(List<String> arguments) async {
   }
 
   if (exitCode == 0) {
+    outputDirectory.createSync(recursive: true);
+    File(
+      '${outputDirectory.path}${Platform.pathSeparator}$_ownershipMarker',
+    ).writeAsStringSync(
+      'Written by tool/doc.dart. Its presence is what allows a later run to '
+      'empty this directory; delete it and the tool will refuse to touch '
+      'anything already here.\n',
+    );
     stdout.writeln('documentation written to $output');
+  } else {
+    // Everything here was written by the run that just failed -- the
+    // directory was emptied on the way in -- so clearing it leaves no
+    // half-generated tree for the next run to refuse to empty.
+    if (outputDirectory.existsSync()) {
+      outputDirectory.deleteSync(recursive: true);
+    }
   }
 }
 
