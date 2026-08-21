@@ -13,6 +13,7 @@ import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'string_generator.dart';
 
 /// How a test case ended.
 enum TestCaseStatus {
@@ -271,6 +272,37 @@ final class TestCase implements ffi.Finalizable {
         throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
       }
       return _generateInteger(min, max);
+    });
+  }
+
+  /// Draws a string described by [generator].
+  ///
+  /// Raises [AssumptionFailed] when the draw rejects itself, which some
+  /// specifications can do — an email address that would exceed the RFC length
+  /// cap, for instance.
+  String drawString(StringGenerator generator) {
+    return _guarded(() {
+      final out = calloc<raw.hegel_generate_string_result_t>();
+      try {
+        session.check(
+          session.bindings.hegel_generate_string(
+            session.context,
+            handle,
+            generator.handle,
+            out,
+          ),
+          'hegel_generate_string',
+        );
+        // Read by length, never as a C string: the drawn alphabet may include
+        // U+0000, which would truncate anything that stopped at a NUL.
+        return utf8FromBuffer(out.ref.data, out.ref.len);
+      } finally {
+        session.bindings.hegel_generate_string_result_free(
+          session.context,
+          out,
+        );
+        calloc.free(out);
+      }
     });
   }
 
