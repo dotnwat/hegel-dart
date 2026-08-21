@@ -14,6 +14,19 @@ import 'package:hegel/src/libhegel/session.dart';
 import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 
+/// The health checks that measure the machine rather than the code.
+///
+/// TooSlow fires on thirty seconds of wall clock, so on a loaded or slow CI
+/// runner it reports the runner rather than a defect in what is being tested.
+/// The other three are deterministic given the choice sequence, so they are
+/// left live throughout the suite: if the engine ever has something to say
+/// about one of these tests, it should be able to say it.
+///
+/// The suite used to suppress all four everywhere. Removing that changed
+/// nothing -- every test still passed -- so the blanket was never
+/// load-bearing, only in the way.
+const Set<HealthCheck> machineSpeedChecks = <HealthCheck>{HealthCheck.tooSlow};
+
 /// What one call to [driveIntegerProperty] observed.
 final class Drive {
   /// Records a finished run.

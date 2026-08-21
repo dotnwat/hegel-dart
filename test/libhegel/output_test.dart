@@ -9,13 +9,15 @@ import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
+
 const Settings verbose = Settings(
   testCases: 5,
   seed: 73,
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.verbose,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 void main() {
@@ -222,7 +224,7 @@ void main() {
         derandomize: true,
         database: Database.disabled,
         verbosity: Verbosity.quiet,
-        suppressHealthChecks: everyHealthCheck,
+        suppressHealthChecks: machineSpeedChecks,
       ),
       session: session,
     );

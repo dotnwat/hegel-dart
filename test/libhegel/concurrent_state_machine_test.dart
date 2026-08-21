@@ -16,6 +16,8 @@ import 'package:hegel/src/libhegel/state_machine.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
+
 const List<String> rules = <String>['acquire', 'release'];
 
 /// What a worker isolate needs to join a running machine.
@@ -121,7 +123,7 @@ void main() {
           database: Database.disabled,
           verbosity: Verbosity.quiet,
           statefulStepCount: 4,
-          suppressHealthChecks: everyHealthCheck,
+          suppressHealthChecks: machineSpeedChecks,
         ),
         session: session,
       );
@@ -174,7 +176,7 @@ void main() {
         database: Database.disabled,
         verbosity: Verbosity.quiet,
         statefulStepCount: 6,
-        suppressHealthChecks: everyHealthCheck,
+        suppressHealthChecks: machineSpeedChecks,
       ),
       session: session,
     );
@@ -307,7 +309,7 @@ void main() {
           database: Database.disabled,
           verbosity: Verbosity.quiet,
           statefulStepCount: 3,
-          suppressHealthChecks: everyHealthCheck,
+          suppressHealthChecks: machineSpeedChecks,
         ),
         session: session,
       );

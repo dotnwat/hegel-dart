@@ -17,7 +17,7 @@ const Settings shrinking = Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 /// Runs the shared integer property, keeping this file's origin string, and
@@ -121,7 +121,7 @@ void main() {
           derandomize: true,
           database: Database.disabled,
           verbosity: Verbosity.quiet,
-          suppressHealthChecks: everyHealthCheck,
+          suppressHealthChecks: machineSpeedChecks,
           reportMultipleFailures: true,
         ),
         session: session,

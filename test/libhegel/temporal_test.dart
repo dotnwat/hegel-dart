@@ -8,13 +8,15 @@ import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
+
 const Settings settings = Settings(
   testCases: 40,
   seed: 19,
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: everyHealthCheck,
+  suppressHealthChecks: machineSpeedChecks,
 );
 
 int daysIn(int year, int month) {
