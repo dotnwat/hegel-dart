@@ -118,6 +118,90 @@ void main() {
     });
   });
 
+  group('the reuse phase', () {
+    // Everything except reuse, so that adding it back is the only difference
+    // between the two runs below.
+    const Set<Phase> withoutReuse = <Phase>{
+      Phase.explicit,
+      Phase.generate,
+      Phase.target,
+      Phase.shrink,
+    };
+
+    test('is what turns a stored counterexample back into a test case', () {
+      final directory = scratch();
+      run(seed: 3, database: Database.at(directory.path));
+
+      final skipped = run(
+        seed: 999,
+        database: Database.at(directory.path),
+        phases: withoutReuse,
+      );
+      expect(
+        skipped.draws.first,
+        isNot(shrunkAtDefaultThreshold),
+        reason: 'with reuse off there is nothing to replay from',
+      );
+
+      final replay = run(
+        seed: 999,
+        database: Database.at(directory.path),
+        phases: <Phase>{...withoutReuse, Phase.reuse},
+      );
+      expect(replay.draws.first, shrunkAtDefaultThreshold);
+      expect(replay.testCases, 1);
+    });
+
+    test('paired with shrink alone replays without generating anything', () {
+      final directory = scratch();
+      run(seed: 3, database: Database.at(directory.path));
+
+      // The shape a "rerun just the known failures" mode would take.
+      final replayOnly = run(
+        seed: 999,
+        database: Database.at(directory.path),
+        phases: <Phase>{Phase.reuse, Phase.shrink},
+      );
+      expect(replayOnly.draws, <int>[shrunkAtDefaultThreshold]);
+      expect(replayOnly.result.status, RunStatus.failed);
+    });
+  });
+
+  group('a counterexample that no longer fails', () {
+    test('is replayed once and then dropped from the database', () {
+      final directory = scratch();
+      run(seed: 3, database: Database.at(directory.path));
+      expect(entriesIn(directory), greaterThan(0));
+
+      // Standing in for the bug being fixed: nothing in range can exceed
+      // this threshold, so the replayed case now passes.
+      final fixed = run(
+        seed: 7,
+        database: Database.at(directory.path),
+        threshold: 1000,
+      );
+      expect(
+        fixed.draws.first,
+        shrunkAtDefaultThreshold,
+        reason: 'the stored case should still be tried first',
+      );
+      expect(fixed.result.status, RunStatus.passed);
+      expect(
+        entriesIn(directory),
+        0,
+        reason: 'an example that stopped failing should not be kept forever',
+      );
+
+      // Otherwise a fixed bug would go on costing a replay on every run.
+      final later = run(
+        seed: 11,
+        database: Database.at(directory.path),
+        threshold: 1000,
+      );
+      expect(later.draws.first, isNot(shrunkAtDefaultThreshold));
+    });
+  });
+
   group('the database key', () {
     test('scopes entries so one directory can hold several properties', () {
       final directory = scratch();
