@@ -2,10 +2,12 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:hegel/src/libhegel/run_result.dart';
 import 'package:hegel/src/libhegel/session.dart';
 import 'package:hegel/src/libhegel/settings.dart';
+import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
 import '../support/property_driver.dart';
@@ -32,6 +34,58 @@ Settings settingsFor({
   verbosity: Verbosity.quiet,
   suppressHealthChecks: everyHealthCheck,
 );
+
+/// Runs one failing property to completion in a fresh isolate and returns the
+/// value it shrank to.
+///
+/// Each worker gets its own session and its own key, and they all write into
+/// one directory at once -- which is what `package:test` will do the moment
+/// several test files run in parallel against a shared `.hegel/`.
+int storeCounterexample(String path, String key, int seed, int threshold) {
+  final session = Libhegel.open();
+  final settings = settingsFor(
+    seed: seed,
+    database: Database.at(path),
+    key: key,
+  );
+  try {
+    final drive = driveIntegerProperty(
+      session,
+      settings: settings,
+      threshold: threshold,
+    );
+    try {
+      final failure = drive.result.failure(0);
+      try {
+        // Not drive.draws.last: that is wherever the shrinker's search
+        // happened to stop, which is only sometimes the value it settled on.
+        // The reproduction blob is the answer, and the answer is what got
+        // stored under this key.
+        final replay = TestCase.fromBlob(
+          settings,
+          failure.reproductionBlob!,
+          session: session,
+        );
+        try {
+          final value = replay.drawInteger(min: 0, max: 1000);
+          replay.markComplete(
+            TestCaseStatus.interesting,
+            origin: 'value above threshold',
+          );
+          return value;
+        } finally {
+          replay.dispose();
+        }
+      } finally {
+        failure.dispose();
+      }
+    } finally {
+      drive.result.dispose();
+    }
+  } finally {
+    session.dispose();
+  }
+}
 
 int entriesIn(Directory directory) => directory.existsSync()
     ? directory.listSync(recursive: true).whereType<File>().length
@@ -76,7 +130,6 @@ void main() {
 
       final discovery = run(seed: 3, database: Database.at(directory.path));
       expect(discovery.result.status, RunStatus.failed);
-      expect(discovery.draws.last, shrunkAtDefaultThreshold);
       expect(
         entriesIn(directory),
         greaterThan(0),
@@ -202,6 +255,123 @@ void main() {
     });
   });
 
+  group('a database that is unusable, absent or damaged', () {
+    // The engine's own contract: a broken store is a silent no-op and must
+    // never change whether a run passes or fails. Left unchecked, a property
+    // suite could start failing because of a read-only checkout.
+    test('does not change the outcome of the run', () {
+      final directory = scratch();
+      // A regular file, so creating a directory beneath it fails on every
+      // platform -- unlike permission bits, which Windows largely ignores.
+      final blocker = File('${directory.path}${Platform.pathSeparator}blocker')
+        ..writeAsStringSync('not a directory');
+
+      final broken = run(
+        seed: 3,
+        database: Database.at(
+          '${blocker.path}${Platform.pathSeparator}examples',
+        ),
+      );
+      final control = run(seed: 3, database: Database.disabled);
+
+      expect(broken.result.status, control.result.status);
+      expect(broken.draws, control.draws);
+      expect(broken.testCases, control.testCases);
+      expect(blocker.readAsStringSync(), 'not a directory');
+      // Without this the comparison above would also pass against a database
+      // that worked perfectly and simply had nothing stored in it yet.
+      expect(
+        Directory('${blocker.path}${Platform.pathSeparator}examples')
+            .existsSync(),
+        isFalse,
+      );
+    });
+
+    test('is created when it does not exist yet', () {
+      final directory = scratch();
+      final nested = <String>[
+        directory.path,
+        'does',
+        'not',
+        'exist',
+      ].join(Platform.pathSeparator);
+
+      run(seed: 3, database: Database.at(nested));
+      expect(Directory(nested).existsSync(), isTrue);
+      expect(entriesIn(Directory(nested)), greaterThan(0));
+
+      final replay = run(seed: 999, database: Database.at(nested));
+      expect(replay.draws.first, shrunkAtDefaultThreshold);
+      expect(replay.testCases, 1);
+    });
+
+    test('survives entries that have been corrupted', () {
+      final directory = scratch();
+      run(seed: 3, database: Database.at(directory.path));
+
+      // Established first, so that the recovery below is measured against a
+      // database known to have been replaying a moment earlier.
+      final before = run(seed: 999, database: Database.at(directory.path));
+      expect(before.testCases, 1);
+
+      for (final file
+          in directory.listSync(recursive: true).whereType<File>()) {
+        file.writeAsBytesSync(<int>[0xff, 0x00, 0xfe, 0x42, 0x99]);
+      }
+
+      final after = run(seed: 999, database: Database.at(directory.path));
+      expect(
+        after.result.status,
+        RunStatus.failed,
+        reason: 'a corrupt database should not stop the property running',
+      );
+      expect(
+        after.testCases,
+        greaterThan(1),
+        reason: 'nothing readable was left to replay, so it must generate',
+      );
+    });
+  });
+
+  group('several properties writing at once', () {
+    test('keep their own counterexamples in one shared directory', () async {
+      final directory = scratch();
+      const int workers = 4;
+      int thresholdFor(int worker) => 50 + worker * 100;
+
+      final stored = await Future.wait(<Future<int>>[
+        for (var worker = 0; worker < workers; worker++)
+          Isolate.run(
+            () => storeCounterexample(
+              directory.path,
+              'worker-$worker',
+              3,
+              thresholdFor(worker),
+            ),
+          ),
+      ]);
+
+      // Without distinct values, cross-talk between keys would be invisible
+      // and every assertion below would hold no matter what happened.
+      expect(
+        stored.toSet(),
+        hasLength(workers),
+        reason: 'each worker must shrink to a value only it could have stored',
+      );
+
+      for (var worker = 0; worker < workers; worker++) {
+        final replay = run(
+          seed: 999,
+          database: Database.at(directory.path),
+          key: 'worker-$worker',
+          threshold: thresholdFor(worker),
+        );
+        expect(replay.draws.first, stored[worker]);
+        expect(replay.testCases, 1);
+      }
+    });
+  });
+
   group('the database key', () {
     test('scopes entries so one directory can hold several properties', () {
       final directory = scratch();
@@ -233,11 +403,7 @@ void main() {
 
     test('may be empty, which is a key and not a request for no database', () {
       final directory = scratch();
-      final discovery = run(
-        seed: 3,
-        database: Database.at(directory.path),
-        key: '',
-      );
+      run(seed: 3, database: Database.at(directory.path), key: '');
       expect(entriesIn(directory), greaterThan(0));
 
       final replay = run(
@@ -245,7 +411,7 @@ void main() {
         database: Database.at(directory.path),
         key: '',
       );
-      expect(replay.draws.first, discovery.draws.last);
+      expect(replay.draws.first, shrunkAtDefaultThreshold);
       expect(replay.testCases, 1);
     });
   });

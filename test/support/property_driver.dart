@@ -23,6 +23,10 @@ final class Drive {
   final RunResult result;
 
   /// Every value drawn, in the order the engine asked for it.
+  ///
+  /// The last entry is wherever the shrinker's search stopped, which is only
+  /// sometimes the value it settled on. Read the counterexample itself from
+  /// the failure's reproduction blob.
   final List<int> draws;
 
   /// How many test cases the engine handed out.
