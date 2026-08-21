@@ -71,10 +71,41 @@ Directory resolveOutputDirectory(Directory root, String value) {
   if (value.trim().isEmpty) {
     throw ArgumentError.value(value, '--output', 'must not be empty');
   }
-  final given = Directory(value);
+  // Separators are normalised so that a value written with forward slashes
+  // still compares against paths built with the platform's separator.
+  final normalised = Platform.isWindows ? value.replaceAll('/', r'\') : value;
+  final given = Directory(normalised);
   return given.isAbsolute
       ? given
-      : Directory('${root.path}${Platform.pathSeparator}$value');
+      : Directory('${root.path}${Platform.pathSeparator}$normalised');
+}
+
+/// The canonical form of [path], symlinks resolved, whether or not it exists.
+///
+/// `resolveSymbolicLinksSync` only works on something that is already there,
+/// so a directory yet to be created would stay unresolved while the package
+/// root does not. On macOS, where the temporary directory is reached through
+/// a symlink, the two then never compare equal and every check below passes
+/// silently -- which is exactly how `--output lib/nested` slipped through.
+String canonicalPath(String path) {
+  final separator = Platform.pathSeparator;
+  var directory = Directory(path).absolute;
+  final missing = <String>[];
+  while (!directory.existsSync()) {
+    final parent = directory.parent;
+    if (parent.path == directory.path) break;
+    missing.insert(
+      0,
+      directory.path
+          .substring(parent.path.length)
+          .replaceAll(RegExp(r'^[\\/]+'), ''),
+    );
+    directory = parent;
+  }
+  final resolved = directory.existsSync()
+      ? directory.resolveSymbolicLinksSync()
+      : directory.path;
+  return <String>[resolved, ...missing].join(separator);
 }
 
 /// Throws unless [output] is a directory this tool may empty.
@@ -83,16 +114,8 @@ Directory resolveOutputDirectory(Directory root, String value) {
 /// from an argument. Before this, `--output .` erased the checkout including
 /// .git, and `--output ..` erased everything beside it.
 void checkSafeToEmpty(Directory root, Directory output) {
-  String canonical(Directory directory) {
-    try {
-      return directory.resolveSymbolicLinksSync();
-    } on FileSystemException {
-      return directory.absolute.path;
-    }
-  }
-
-  final target = canonical(output);
-  final base = canonical(root);
+  final target = canonicalPath(output.path);
+  final base = canonicalPath(root.path);
   final separator = Platform.pathSeparator;
 
   if (target == base) {

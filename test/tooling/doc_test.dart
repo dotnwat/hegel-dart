@@ -81,6 +81,53 @@ void main() {
     });
   });
 
+  // The package root is often reached through a symlink -- on macOS the
+  // temporary directory always is -- and a path that does not exist yet
+  // cannot be resolved directly. Both together once let lib/nested past every
+  // check.
+  group('through a symlinked root', () {
+    late Directory real;
+    late Directory viaLink;
+
+    setUp(() {
+      real = Directory.systemTemp.createTempSync('hegel_doc_real_');
+      Directory('${real.path}${Platform.pathSeparator}lib').createSync();
+      final linkPath = '${real.path}_link';
+      Link(linkPath).createSync(real.path);
+      viaLink = Directory(linkPath);
+    });
+
+    tearDown(() {
+      final link = Link('${real.path}_link');
+      if (link.existsSync()) link.deleteSync();
+      if (real.existsSync()) real.deleteSync(recursive: true);
+    });
+
+    test('still refuses a source directory', () {
+      expect(
+        () => checkSafeToEmpty(viaLink, resolveOutputDirectory(viaLink, 'lib')),
+        throwsArgumentError,
+      );
+    });
+
+    test('still refuses a path inside one that does not exist yet', () {
+      expect(
+        () => checkSafeToEmpty(
+          viaLink,
+          resolveOutputDirectory(viaLink, 'lib/nested'),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('still refuses the package itself', () {
+      expect(
+        () => checkSafeToEmpty(viaLink, resolveOutputDirectory(viaLink, '.')),
+        throwsArgumentError,
+      );
+    });
+  }, skip: Platform.isWindows ? 'symlinks need privileges on Windows' : null);
+
   group('allowing', () {
     test('a directory that does not exist yet', () {
       expect(() => check('build/doc'), returnsNormally);
