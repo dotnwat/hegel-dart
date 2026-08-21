@@ -2,6 +2,8 @@
 @Tags(<String>['slow'])
 library;
 
+import 'dart:io';
+
 import 'package:hegel/src/libhegel/run_result.dart';
 import 'package:hegel/src/libhegel/session.dart';
 import 'package:hegel/src/libhegel/settings.dart';
@@ -46,10 +48,12 @@ void main() {
         ),
         body: (TestCase testCase, List<int> draws) {
           draws.add(testCase.drawInteger(min: 0, max: 10));
-          // Busy-waiting rather than sleeping: the run loop is synchronous, so
-          // an await here would not hold the engine up at all.
-          final spin = Stopwatch()..start();
-          while (spin.elapsedMilliseconds < 4000) {}
+          // dart:io's sleep, not Future.delayed: the run loop is synchronous,
+          // so an await here would not hold the engine up at all. This blocks
+          // the isolate outright, which is what the engine's wall-clock
+          // measurement needs, and unlike a spin loop it does not hold a core
+          // while it waits.
+          sleep(const Duration(seconds: 4));
           testCase.markComplete(TestCaseStatus.valid);
         },
       );
