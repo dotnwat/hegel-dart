@@ -12,6 +12,7 @@ import 'codec/bigint.dart';
 import 'collection.dart';
 import 'errors.dart';
 import 'marshal.dart';
+import 'pool.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'span.dart';
@@ -321,6 +322,22 @@ final class TestCase implements ffi.Finalizable {
           'hegel_new_collection',
         );
         return Collection(session, out.value);
+      } finally {
+        calloc.free(out);
+      }
+    });
+  }
+
+  /// Creates a set of variable identifiers the engine can choose among.
+  Pool newPool() {
+    return _guarded(() {
+      final out = calloc<ffi.Pointer<raw.hegel_pool_t>>();
+      try {
+        session.check(
+          session.bindings.hegel_new_pool(session.context, handle, out),
+          'hegel_new_pool',
+        );
+        return Pool(session, out.value);
       } finally {
         calloc.free(out);
       }
