@@ -10,74 +10,82 @@ import 'bindings.g.dart' as raw;
 import 'marshal.dart';
 import 'session.dart';
 
-/// Which phases of the property-test loop to run.
-///
-/// An extension type rather than an enum because these combine: the ABI takes
-/// a bitwise OR of them.
-extension type const Phases(int bits) {
-  /// Replay hard-coded explicit examples.
-  static const Phases explicit = Phases(raw.hegel_phase_t.HEGEL_PHASE_EXPLICIT);
-
-  /// Replay counterexamples persisted by previous runs.
-  static const Phases reuse = Phases(raw.hegel_phase_t.HEGEL_PHASE_REUSE);
-
-  /// Generate fresh test cases.
-  static const Phases generate = Phases(raw.hegel_phase_t.HEGEL_PHASE_GENERATE);
-
-  /// Hill-climb toward observed targets.
-  static const Phases target = Phases(raw.hegel_phase_t.HEGEL_PHASE_TARGET);
-
-  /// Shrink discovered failures.
-  static const Phases shrink = Phases(raw.hegel_phase_t.HEGEL_PHASE_SHRINK);
-
-  /// Every phase, which is the engine's own default.
-  static const Phases all = Phases(raw.hegel_phase_t.HEGEL_PHASE_ALL);
-
-  /// Both sets of phases.
-  Phases operator |(Phases other) => Phases(bits | other.bits);
-
-  /// Whether every phase in [other] is included here.
-  bool includes(Phases other) => bits & other.bits == other.bits;
+/// A value that occupies one bit of a mask the ABI takes.
+abstract interface class MaskFlag {
+  /// This value's bit.
+  int get bit;
 }
 
-/// Health checks the engine may abort a run over.
+/// One phase of the property-test loop.
 ///
-/// Passed to [Settings.suppressHealthChecks] to turn them off, so a value here
-/// names what will *not* fire.
-extension type const HealthChecks(int bits) {
+/// A set of these rather than a bit-flag type: `const Settings(phases: {...})`
+/// has to work, and an extension type's operators cannot be evaluated at
+/// compile time, so combining flags that way would force callers to give up
+/// const or hand-compute bit values.
+enum Phase implements MaskFlag {
+  /// Replay hard-coded explicit examples.
+  explicit(raw.hegel_phase_t.HEGEL_PHASE_EXPLICIT),
+
+  /// Replay counterexamples persisted by previous runs.
+  reuse(raw.hegel_phase_t.HEGEL_PHASE_REUSE),
+
+  /// Generate fresh test cases.
+  generate(raw.hegel_phase_t.HEGEL_PHASE_GENERATE),
+
+  /// Hill-climb toward observed targets.
+  target(raw.hegel_phase_t.HEGEL_PHASE_TARGET),
+
+  /// Shrink discovered failures.
+  shrink(raw.hegel_phase_t.HEGEL_PHASE_SHRINK);
+
+  const Phase(this.bit);
+
+  @override
+  final int bit;
+}
+
+/// Every phase, which is also what the engine does by default.
+const Set<Phase> everyPhase = <Phase>{
+  Phase.explicit,
+  Phase.reuse,
+  Phase.generate,
+  Phase.target,
+  Phase.shrink,
+};
+
+/// A health check the engine may abort a run over.
+enum HealthCheck implements MaskFlag {
   /// Too many draws rejected by assumptions.
-  static const HealthChecks filterTooMuch = HealthChecks(
-    raw.hegel_health_check_t.HEGEL_HC_FILTER_TOO_MUCH,
-  );
+  filterTooMuch(raw.hegel_health_check_t.HEGEL_HC_FILTER_TOO_MUCH),
 
   /// Individual test cases taking too long.
-  static const HealthChecks tooSlow = HealthChecks(
-    raw.hegel_health_check_t.HEGEL_HC_TOO_SLOW,
-  );
+  tooSlow(raw.hegel_health_check_t.HEGEL_HC_TOO_SLOW),
 
   /// Generated values too large.
-  static const HealthChecks testCasesTooLarge = HealthChecks(
-    raw.hegel_health_check_t.HEGEL_HC_TEST_CASES_TOO_LARGE,
-  );
+  testCasesTooLarge(raw.hegel_health_check_t.HEGEL_HC_TEST_CASES_TOO_LARGE),
 
   /// A first test case that is already disproportionately large.
-  static const HealthChecks largeInitialTestCase = HealthChecks(
+  largeInitialTestCase(
     raw.hegel_health_check_t.HEGEL_HC_LARGE_INITIAL_TEST_CASE,
   );
 
-  /// Every check.
-  static const HealthChecks all = HealthChecks(1 | 2 | 4 | 8);
+  const HealthCheck(this.bit);
 
-  /// No checks, the engine's own default.
-  static const HealthChecks none = HealthChecks(0);
-
-  /// Both sets of checks.
-  HealthChecks operator |(HealthChecks other) =>
-      HealthChecks(bits | other.bits);
-
-  /// Whether every check in [other] is included here.
-  bool includes(HealthChecks other) => bits & other.bits == other.bits;
+  @override
+  final int bit;
 }
+
+/// Every health check, for turning the lot off.
+const Set<HealthCheck> everyHealthCheck = <HealthCheck>{
+  HealthCheck.filterTooMuch,
+  HealthCheck.tooSlow,
+  HealthCheck.testCasesTooLarge,
+  HealthCheck.largeInitialTestCase,
+};
+
+/// Folds [values] into the bit mask the ABI expects.
+int maskOf(Iterable<MaskFlag> values) =>
+    values.fold<int>(0, (int mask, MaskFlag value) => mask | value.bit);
 
 /// Whether to run the full loop or a single test case.
 enum Mode {
@@ -211,10 +219,10 @@ final class Settings {
   final String? databaseKey;
 
   /// Which phases of the loop to run.
-  final Phases? phases;
+  final Set<Phase>? phases;
 
   /// Health checks to turn off.
-  final HealthChecks? suppressHealthChecks;
+  final Set<HealthCheck>? suppressHealthChecks;
 
   /// Keep generating after the first failure to find other distinct bugs.
   final bool? reportMultipleFailures;
@@ -334,7 +342,7 @@ final class Settings {
     }
     if (phases case final value?) {
       session.check(
-        bindings.hegel_settings_set_phases(context, handle, value.bits),
+        bindings.hegel_settings_set_phases(context, handle, maskOf(value)),
         'hegel_settings_set_phases',
       );
     }
@@ -343,7 +351,7 @@ final class Settings {
         bindings.hegel_settings_set_suppress_health_check(
           context,
           handle,
-          value.bits,
+          maskOf(value),
         ),
         'hegel_settings_set_suppress_health_check',
       );

@@ -15,7 +15,7 @@ const Settings shrinking = Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: HealthChecks.all,
+  suppressHealthChecks: everyHealthCheck,
 );
 
 /// Runs a property that fails whenever the drawn integer exceeds [threshold],
@@ -137,7 +137,7 @@ void main() {
           derandomize: true,
           database: Database.disabled,
           verbosity: Verbosity.quiet,
-          suppressHealthChecks: HealthChecks.all,
+          suppressHealthChecks: everyHealthCheck,
           reportMultipleFailures: true,
         ),
         session: session,

@@ -14,7 +14,7 @@ const Settings settings = Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: HealthChecks.all,
+  suppressHealthChecks: everyHealthCheck,
 );
 
 BigInt big(String value) => BigInt.parse(value);

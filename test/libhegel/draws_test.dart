@@ -21,7 +21,7 @@ Settings settingsFor({int testCases = 50, int seed = 42}) => Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: HealthChecks.all,
+  suppressHealthChecks: everyHealthCheck,
 );
 
 /// A test case backed by a fake, for the paths a real engine will not take

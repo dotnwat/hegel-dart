@@ -16,7 +16,7 @@ const Settings settings = Settings(
   derandomize: true,
   database: Database.disabled,
   verbosity: Verbosity.quiet,
-  suppressHealthChecks: HealthChecks.all,
+  suppressHealthChecks: everyHealthCheck,
 );
 
 void main() {

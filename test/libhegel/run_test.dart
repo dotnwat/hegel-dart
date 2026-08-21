@@ -16,7 +16,7 @@ const Settings deterministic = Settings(
   seed: 1,
   derandomize: true,
   database: Database.disabled,
-  phases: Phases.generate,
+  phases: {Phase.generate},
   verbosity: Verbosity.quiet,
 );
 
