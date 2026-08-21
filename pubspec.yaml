@@ -10,6 +10,14 @@ homepage: https://hegel.dev
 environment:
   sdk: ^3.13.0
 
+# The engine is a prebuilt binary, and hegel-rust publishes desktop builds
+# only. Declaring this keeps the package off Android, iOS, and web, where it
+# could never work rather than merely being untested.
+platforms:
+  linux:
+  macos:
+  windows:
+
 dependencies:
   # Asset types for the build hook that ships libhegel (hook/build.dart).
   code_assets: ^2.0.0
