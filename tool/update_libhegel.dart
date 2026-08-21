@@ -112,6 +112,27 @@ ${entries.join('\n')}
 ''';
 }
 
+/// Writes the pin, the vendored header, and the vendored licence for [tag].
+///
+/// Every artifact is fetched and decoded before the first one is written. A
+/// failure partway through would otherwise leave the pin naming one release
+/// while the header stayed vendored from another — precisely the drift these
+/// three files are pinned together to prevent.
+Future<void> writePinnedArtifacts({
+  required Directory root,
+  required String tag,
+  required EnginePin pin,
+  EngineFetch fetch = httpEngineFetch,
+}) async {
+  final pinSource = renderVersionFile(pin);
+  final header = utf8.decode(await fetch(_rawUrl(tag, _upstreamHeaderPath)));
+  final licence = utf8.decode(await fetch(_rawUrl(tag, _upstreamLicensePath)));
+
+  _write(root, _versionFilePath, pinSource);
+  _write(root, _headerPath, header);
+  _write(root, _licensePath, licence);
+}
+
 Future<void> main(List<String> arguments) async {
   try {
     await _run(arguments);
@@ -174,17 +195,7 @@ Future<void> _run(List<String> arguments) async {
 
   final root = _packageRoot();
   final pin = EnginePin(version: version, sha256ByAsset: digests);
-  _write(root, _versionFilePath, renderVersionFile(pin));
-  _write(
-    root,
-    _headerPath,
-    utf8.decode(await httpEngineFetch(_rawUrl(tag, _upstreamHeaderPath))),
-  );
-  _write(
-    root,
-    _licensePath,
-    utf8.decode(await httpEngineFetch(_rawUrl(tag, _upstreamLicensePath))),
-  );
+  await writePinnedArtifacts(root: root, tag: tag, pin: pin);
 
   stdout.writeln(
     'wrote $_versionFilePath, $_headerPath, and $_licensePath.\n'

@@ -188,11 +188,26 @@ final class AcquiredEngine {
 /// Lowercase hex SHA-256 of [bytes].
 String sha256HexOf(List<int> bytes) => crypto.sha256.convert(bytes).toString();
 
-/// Whether [file] exists and hashes to [expectedHex].
+/// The contents of [file] if they hash to [expectedHex], otherwise null.
+///
+/// Reads once and hashes that buffer, so the bytes a caller goes on to use are
+/// the exact bytes that were verified. Checking the file and then re-reading it
+/// would leave a window in which a concurrent writer could slip different
+/// content past the pin.
+///
+/// A file that is missing, unreadable, or does not match is a miss rather than
+/// an error. Cache entries are optional by design: one locked down by its mode,
+/// or removed by a concurrent cleanup mid-read, should send the caller to the
+/// download instead of failing the build.
 @visibleForTesting
-bool fileMatchesDigest(File file, String expectedHex) {
-  if (!file.existsSync()) return false;
-  return sha256HexOf(file.readAsBytesSync()) == expectedHex.toLowerCase();
+Uint8List? readVerified(File file, String expectedHex) {
+  final Uint8List bytes;
+  try {
+    bytes = file.readAsBytesSync();
+  } on FileSystemException {
+    return null;
+  }
+  return sha256HexOf(bytes) == expectedHex.toLowerCase() ? bytes : null;
 }
 
 /// The directory holding cached engines for [pin] under a cache [root].
@@ -252,6 +267,14 @@ Future<AcquiredEngine> acquireEngine({
   EngineFetch fetch = httpEngineFetch,
 }) async {
   final target = engineTargetFor(os, architecture);
+
+  // Deliberately ahead of the target check below: that check's message tells
+  // the user to build the engine themselves and name it here, so an override
+  // has to work on precisely the targets upstream does not publish.
+  if (overrideFile != null) {
+    return _stageOverride(overrideFile, stagingDirectory, target);
+  }
+
   if (target == null) {
     throw EngineAcquisitionException(
       'hegel has no prebuilt libhegel engine for ${os.name}/'
@@ -262,34 +285,10 @@ Future<AcquiredEngine> acquireEngine({
     );
   }
 
-  if (overrideFile != null) {
-    if (!overrideFile.existsSync()) {
-      throw EngineAcquisitionException(
-        'the hegel.libhegel_path user-define names ${overrideFile.path}, '
-        'which does not exist. Correct the path or remove the user-define to '
-        'use the pinned engine.',
-      );
-    }
-    // A local build has nothing to verify against, so it is restaged every
-    // time rather than trusted to still match: the hook re-runs whenever the
-    // file changes, and a stale copy would outlive the build it came from.
-    final staged = _publish(
-      overrideFile.readAsBytesSync(),
-      stagingDirectory,
-      target.assetName,
-      replaceExisting: true,
-    );
-    return AcquiredEngine(
-      file: staged,
-      source: EngineSource.override,
-      dependencies: <File>[overrideFile],
-    );
-  }
-
   final digest = pin.digestFor(target);
 
   final stagedFile = _child(stagingDirectory, target.assetName);
-  if (fileMatchesDigest(stagedFile, digest)) {
+  if (readVerified(stagedFile, digest) != null) {
     return AcquiredEngine(file: stagedFile, source: EngineSource.staged);
   }
 
@@ -297,9 +296,12 @@ Future<AcquiredEngine> acquireEngine({
       ? null
       : _child(engineCacheDirectory(cacheRoot, pin), target.assetName);
   if (cacheFile != null) {
-    if (fileMatchesDigest(cacheFile, digest)) {
+    // Stage the very buffer that was verified, never a re-read of the file:
+    // the cache is shared, so anything read a second time is unverified.
+    final cached = readVerified(cacheFile, digest);
+    if (cached != null) {
       final staged = _publish(
-        cacheFile.readAsBytesSync(),
+        cached,
         stagingDirectory,
         target.assetName,
         replaceExisting: true,
@@ -344,6 +346,53 @@ Future<AcquiredEngine> acquireEngine({
     replaceExisting: true,
   );
   return AcquiredEngine(file: staged, source: EngineSource.download);
+}
+
+AcquiredEngine _stageOverride(
+  File overrideFile,
+  Directory stagingDirectory,
+  EngineTarget? target,
+) {
+  if (!overrideFile.existsSync()) {
+    throw EngineAcquisitionException(
+      'the hegel.libhegel_path user-define names ${overrideFile.path}, which '
+      'does not exist. Correct the path or remove the user-define to use the '
+      'pinned engine.',
+    );
+  }
+  final Uint8List bytes;
+  try {
+    bytes = overrideFile.readAsBytesSync();
+  } on FileSystemException catch (error) {
+    // Unlike a cache entry, an override was asked for by name. Falling back to
+    // the pin would quietly ignore what the caller said to use.
+    throw EngineAcquisitionException(
+      'the hegel.libhegel_path user-define names ${overrideFile.path}, which '
+      'could not be read: ${error.message}',
+    );
+  }
+  // A local build has nothing to verify against, so it is restaged every time
+  // rather than trusted to still match: the hook re-runs whenever the file
+  // changes, and a stale copy would outlive the build it came from. With no
+  // published asset for this target there is no canonical name to stage under,
+  // so the file keeps its own.
+  final staged = _publish(
+    bytes,
+    stagingDirectory,
+    target?.assetName ?? _overrideStagingName(overrideFile),
+    replaceExisting: true,
+  );
+  return AcquiredEngine(
+    file: staged,
+    source: EngineSource.override,
+    dependencies: <File>[overrideFile],
+  );
+}
+
+String _overrideStagingName(File file) {
+  final segments = file.uri.pathSegments;
+  final name = segments.isEmpty ? '' : segments.last;
+  return name.isEmpty ? 'libhegel' : name;
 }
 
 /// Writes [bytes] into [directory] as [name] without ever exposing a partial

@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:hegel/src/libhegel/version.g.dart';
@@ -121,6 +122,70 @@ void main() {
       );
       expect(renderVersionFile(shouty), contains("'aabb'"));
       expect(renderVersionFile(shouty), isNot(contains("'AABB'")));
+    });
+  });
+
+  group('writePinnedArtifacts', () {
+    late Directory root;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('hegel_update_');
+    });
+
+    tearDown(() {
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    File artifact(String path) => File.fromUri(root.uri.resolve(path));
+
+    // The pin, the header, and the licence are supposed to come from one tag.
+    // A fetch failing partway must not leave the pin advanced while the header
+    // still belongs to the previous release.
+    test('writes nothing when a later fetch fails', () async {
+      await expectLater(
+        writePinnedArtifacts(
+          root: root,
+          tag: 'v9.9.9',
+          pin: const EnginePin(
+            version: '9.9.9',
+            sha256ByAsset: <String, String>{},
+          ),
+          fetch: (Uri url) async {
+            if (url.path.endsWith('LICENSE')) {
+              throw Exception('the network went away');
+            }
+            return utf8.encode('/* header */');
+          },
+        ),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(artifact('lib/src/libhegel/version.g.dart').existsSync(), isFalse);
+      expect(artifact('third_party/libhegel/hegel.h').existsSync(), isFalse);
+      expect(artifact('third_party/libhegel/LICENSE').existsSync(), isFalse);
+    });
+
+    test('writes all three once every fetch succeeds', () async {
+      await writePinnedArtifacts(
+        root: root,
+        tag: 'v9.9.9',
+        pin: const EnginePin(
+          version: '9.9.9',
+          sha256ByAsset: <String, String>{},
+        ),
+        fetch: (Uri url) async =>
+            utf8.encode(url.path.endsWith('LICENSE') ? 'MIT' : '/* header */'),
+      );
+
+      expect(artifact('lib/src/libhegel/version.g.dart').existsSync(), isTrue);
+      expect(
+        artifact('third_party/libhegel/hegel.h').readAsStringSync(),
+        '/* header */',
+      );
+      expect(
+        artifact('third_party/libhegel/LICENSE').readAsStringSync(),
+        'MIT',
+      );
     });
   });
 

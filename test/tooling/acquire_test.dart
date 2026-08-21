@@ -192,6 +192,44 @@ void main() {
     });
   });
 
+  group('readVerified', () {
+    test('returns the very bytes it hashed', () {
+      final file = File.fromUri(root.uri.resolve('engine'))
+        ..writeAsBytesSync(engineBytes);
+      // The caller stages what this returns, so returning the buffer that was
+      // hashed is what makes a shared cache safe: re-reading the file would
+      // leave room for a concurrent writer to swap it after verification.
+      expect(readVerified(file, engineDigest), engineBytes);
+    });
+
+    test('returns null when the digest does not match', () {
+      final file = File.fromUri(root.uri.resolve('engine'))
+        ..writeAsBytesSync(otherBytes);
+      expect(readVerified(file, engineDigest), isNull);
+    });
+
+    test('returns null for a file that is not there', () {
+      expect(
+        readVerified(File.fromUri(root.uri.resolve('absent')), engineDigest),
+        isNull,
+      );
+    });
+
+    test(
+      'treats an unreadable file as a miss rather than an error',
+      () {
+        final file = File.fromUri(root.uri.resolve('locked-engine'))
+          ..writeAsBytesSync(engineBytes);
+        Process.runSync('chmod', <String>['a-r', file.path]);
+        addTearDown(() => Process.runSync('chmod', <String>['u+r', file.path]));
+        expect(readVerified(file, engineDigest), isNull);
+      },
+      skip: Platform.isWindows || runningAsRoot
+          ? 'needs POSIX mode bits and a non-root user'
+          : null,
+    );
+  });
+
   group('publishFile', () {
     test('writes the bytes and leaves no temporary behind', () {
       final written = publishFile(
@@ -374,6 +412,38 @@ void main() {
       );
     });
 
+    test(
+      'falls back to downloading when a cache entry cannot be read',
+      () async {
+        final cached = publishFile(
+          engineBytes,
+          engineCacheDirectory(cache, pin),
+          assetName,
+          replaceExisting: true,
+        );
+        Process.runSync('chmod', <String>['a-r', cached.path]);
+        addTearDown(
+          () => Process.runSync('chmod', <String>['u+r', cached.path]),
+        );
+
+        final result = await acquireEngine(
+          pin: pin,
+          os: OS.linux,
+          architecture: Architecture.x64,
+          stagingDirectory: staging,
+          cacheRoot: cache,
+          fetch: fetchReturning(engineBytes),
+        );
+
+        // An optional cache going unreadable must not fail the build.
+        expect(result.source, EngineSource.download);
+        expect(result.file.readAsBytesSync(), engineBytes);
+      },
+      skip: Platform.isWindows || runningAsRoot
+          ? 'needs POSIX mode bits and a non-root user'
+          : null,
+    );
+
     group('local override', () {
       test('stages the named file and reports it as a dependency', () async {
         final local = File.fromUri(root.uri.resolve('local-build.so'))
@@ -409,6 +479,27 @@ void main() {
           fetch: neverFetch,
         );
         expect(stagedFile().readAsBytesSync(), otherBytes);
+      });
+
+      // The unsupported-target error tells the user to build the engine and
+      // name it here, so the override has to work on exactly those targets.
+      test('works on a target upstream publishes no engine for', () async {
+        final local = File.fromUri(root.uri.resolve('intel-mac-build.dylib'))
+          ..writeAsBytesSync(otherBytes);
+        final result = await acquireEngine(
+          pin: pin,
+          os: OS.macOS,
+          architecture: Architecture.x64,
+          stagingDirectory: staging,
+          overrideFile: local,
+          fetch: neverFetch,
+        );
+
+        expect(result.source, EngineSource.override);
+        expect(result.file.readAsBytesSync(), otherBytes);
+        // With no published asset there is no canonical name to stage under,
+        // so the local build keeps its own.
+        expect(result.file.uri.pathSegments.last, 'intel-mac-build.dylib');
       });
 
       test('fails loudly instead of falling back to the pin', () async {
