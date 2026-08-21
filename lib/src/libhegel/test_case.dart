@@ -9,6 +9,7 @@ import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
 import 'codec/bigint.dart';
+import 'collection.dart';
 import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
@@ -286,6 +287,43 @@ final class TestCase implements ffi.Finalizable {
         throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
       }
       return _generateInteger(min, max);
+    });
+  }
+
+  /// Runs [body] under this case's guards and abort latch.
+  ///
+  /// Collections, pools, and state machines are driven through a test case's
+  /// stream, so their operations belong under the same guards as a draw.
+  @internal
+  T guarded<T>(T Function() body) => _guarded(body);
+
+  /// Starts an engine-driven sequence of [minSize] to [maxSize] elements.
+  ///
+  /// The engine decides how many elements to produce: loop on
+  /// [Collection.more] and draw one element each time it answers true. A null
+  /// [maxSize] leaves the length unbounded.
+  Collection startCollection({required int minSize, int? maxSize}) {
+    return _guarded(() {
+      checkFitsUnsigned(minSize, 'minSize');
+      if (maxSize != null && minSize > maxSize) {
+        throw ArgumentError.value(minSize, 'minSize', 'exceeds maxSize');
+      }
+      final out = calloc<ffi.Pointer<raw.hegel_collection_t>>();
+      try {
+        session.check(
+          session.bindings.hegel_new_collection(
+            session.context,
+            handle,
+            minSize,
+            sizeOrUnbounded(maxSize, 'maxSize'),
+            out,
+          ),
+          'hegel_new_collection',
+        );
+        return Collection(session, out.value);
+      } finally {
+        calloc.free(out);
+      }
     });
   }
 
