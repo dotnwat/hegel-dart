@@ -171,12 +171,28 @@ void main() {
       'derives a cache root from the environment when unconfigured',
       () async {
         final home = subdirectory('home');
+        // The hook hands defaultCacheRoot the *host* platform, so inject
+        // whichever variable that host's branch reads. Injecting only HOME
+        // leaves a Windows runner with no cache root at all, and nothing to
+        // find below.
+        final environment = Platform.isWindows
+            ? <String, String>{'LOCALAPPDATA': home.path}
+            : <String, String>{'HOME': home.path};
+
         await runHook(
           fetch: (Uri url) async => engineBytes,
-          environment: <String, String>{'HOME': home.path},
+          environment: environment,
         );
+
+        // Which directory that maps to is acquire_test's subject. All this
+        // test asks is that the hook consulted the environment and cached
+        // where that says.
+        final cacheRoot = defaultCacheRoot(
+          environment: environment,
+          isWindows: Platform.isWindows,
+        )!;
         final cached = File.fromUri(
-          home.uri.resolve('.cache/hegel-dart/natives/v9.9.9/$linuxAsset'),
+          engineCacheDirectory(cacheRoot, testPin).uri.resolve(linuxAsset),
         );
         expect(cached.existsSync(), isTrue);
       },

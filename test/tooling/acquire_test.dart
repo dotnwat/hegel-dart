@@ -160,7 +160,10 @@ void main() {
         environment: <String, String>{'HOME': '/home/someone'},
         isWindows: false,
       );
-      expect(resolved?.path, '/home/someone/.cache');
+      // Derived rather than passed through, so this goes through a URI
+      // round-trip that renders as \home\someone\.cache on Windows. The URI
+      // path is the platform-neutral view of the same value.
+      expect(resolved?.uri.path, '/home/someone/.cache/');
     });
 
     test('uses LOCALAPPDATA on Windows', () {
@@ -176,7 +179,7 @@ void main() {
         environment: <String, String>{'USERPROFILE': '/users/me'},
         isWindows: true,
       );
-      expect(resolved?.path, '/users/me/.cache');
+      expect(resolved?.uri.path, '/users/me/.cache/');
     });
 
     // A hook that cannot find a cache root still has to work: it just leans
