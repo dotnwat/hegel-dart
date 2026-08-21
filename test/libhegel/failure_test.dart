@@ -9,6 +9,8 @@ import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
+
 const Settings shrinking = Settings(
   testCases: 100,
   seed: 3,
@@ -18,40 +20,22 @@ const Settings shrinking = Settings(
   suppressHealthChecks: everyHealthCheck,
 );
 
-/// Runs a property that fails whenever the drawn integer exceeds [threshold],
-/// and returns the finished result.
+/// Runs the shared integer property, keeping this file's origin string, and
+/// returns the finished result for the caller to dispose.
 RunResult runFailing(
   Libhegel session, {
   int threshold = 50,
   Settings settings = shrinking,
   List<int>? drawn,
 }) {
-  final run = Run.start(settings, session: session);
-  try {
-    while (true) {
-      final testCase = run.nextTestCase();
-      if (testCase == null) break;
-      try {
-        final value = testCase.drawInteger(min: 0, max: 1000);
-        drawn?.add(value);
-        if (value > threshold) {
-          testCase.markComplete(
-            TestCaseStatus.interesting,
-            origin: 'failure_test: value above threshold',
-          );
-        } else {
-          testCase.markComplete(TestCaseStatus.valid);
-        }
-      } on StopTest {
-        testCase.markComplete(TestCaseStatus.overrun);
-      } finally {
-        testCase.dispose();
-      }
-    }
-    return run.result();
-  } finally {
-    run.dispose();
-  }
+  final drive = driveIntegerProperty(
+    session,
+    settings: settings,
+    threshold: threshold,
+    origin: 'failure_test: value above threshold',
+  );
+  drawn?.addAll(drive.draws);
+  return drive.result;
 }
 
 void main() {
