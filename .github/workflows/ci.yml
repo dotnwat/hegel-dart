@@ -96,3 +96,49 @@ jobs:
 
       - name: Test
         run: dart test
+
+  # Proves the code asset survives ahead-of-time compilation and is still
+  # resolvable from the bundle, which `dart test` (JIT) cannot show. Runs on
+  # all three operating systems because bundling and dynamic-library lookup
+  # are exactly where they differ.
+  aot:
+    name: "aot (${{ matrix.runner }})"
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-14, windows-2025]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/hegel-dart/natives
+            ~/AppData/Local/hegel-dart/natives
+          key: >-
+            libhegel-aot-${{ matrix.runner }}-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - run: dart pub get
+
+      - name: Build the AOT bundle
+        run: dart build cli --target tool/aot_smoke.dart --output build/smoke
+
+      # The bundle must carry the engine next to the executable, and the
+      # executable exits non-zero unless the engine reports the pinned version.
+      - name: Run the bundled binary
+        run: |
+          binary=build/smoke/bundle/bin/aot_smoke
+          [ -f "$binary.exe" ] && binary="$binary.exe"
+          ls build/smoke/bundle/lib
+          "$binary"
