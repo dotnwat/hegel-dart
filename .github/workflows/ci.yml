@@ -245,23 +245,23 @@ jobs:
       - name: Check the package would publish cleanly
         run: dart pub publish --dry-run
 
-      # The dry run prints a tree, not paths, so a file is matched by the
-      # name on its own line: looking for "hook/build.dart" finds nothing even
-      # when the file is right there.
+      # The dry run prints a tree rather than paths, so looking for
+      # "hook/build.dart" finds nothing even when the file is right there.
+      # Matched on " name (" -- the shape of every file line -- rather than on
+      # the box-drawing characters, which are easy to mangle in transit.
       - name: Check the archive carries what a consumer needs
         run: |
           dart pub publish --dry-run > /tmp/archive.txt 2>&1
           cat /tmp/archive.txt
           for required in build.dart version.g.dart bindings.g.dart \
               hegel.h acquire.dart; do
-            grep -qE "\u2500\u2500 $required( |$)" /tmp/archive.txt \
+            grep -qF " $required (" /tmp/archive.txt \
               || { echo "missing from the archive: $required"; exit 1; }
           done
           # The vendored licence is found by where it sits, not by its name:
           # the root package has a LICENSE too, so matching the name alone
           # passes even when the upstream notice is gone.
-          sed -n '/\u2500\u2500 third_party/,$p' /tmp/archive.txt \
-            | grep -q "\u2500\u2500 LICENSE" \
+          sed -n '/third_party/,$p' /tmp/archive.txt | grep -qF " LICENSE (" \
             || { echo "the vendored libhegel licence is missing"; exit 1; }
           echo "archive carries the hook, the pin, the header, both licences"
 
