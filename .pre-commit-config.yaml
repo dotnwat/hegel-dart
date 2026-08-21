@@ -76,7 +76,9 @@ repos:
       # trim it with test tags rather than dropping the hook.
       - id: dart-test
         name: dart test
-        entry: dart test
+        # Slow-tagged tests wait on a thirty-second engine threshold. CI runs
+        # them; a pre-commit hook that did would just get bypassed.
+        entry: dart test --exclude-tags slow
         language: system
         pass_filenames: false
         types_or: [dart, yaml]
