@@ -216,6 +216,11 @@ final class Settings {
   final Database? database;
 
   /// Scopes stored and replayed examples.
+  ///
+  /// Required whenever [database] is enabled; see the refusal in `_apply`.
+  /// The empty string is a perfectly ordinary key rather than a sentinel --
+  /// unlike an empty [Database.at] path -- so it stores and replays like any
+  /// other, and is not refused.
   final String? databaseKey;
 
   /// Which phases of the loop to run.
@@ -261,6 +266,26 @@ final class Settings {
   void _apply(Libhegel session, ffi.Pointer<raw.hegel_settings_t> handle) {
     final bindings = session.bindings;
     final context = session.context;
+
+    // Cross-field, so it cannot sit with either setter. Asking for
+    // persistence without a key is not weaker persistence, it is none: with
+    // no key the engine writes nothing -- not even the database directory --
+    // and replays nothing, so the run is indistinguishable from one that
+    // never configured a database. Verified against the engine for both
+    // Database.standard and Database.at. Refused for the same reason as
+    // Database.at(''): those are the two ways to ask for a database and
+    // silently get no persistence at all.
+    if (database case final chosen? when chosen is! _DisabledDatabase) {
+      if (databaseKey == null) {
+        throw ArgumentError.value(
+          databaseKey,
+          'databaseKey',
+          'is required whenever the database is enabled, because without one '
+              'the engine stores and replays nothing; pass a key that '
+              'identifies this property, or use Database.disabled',
+        );
+      }
+    }
 
     if (testCases case final value?) {
       // The ABI takes this as uint64, so a negative Dart int arrives as

@@ -120,9 +120,13 @@ void main() {
         Database.disabled,
         const Database.at('/tmp/examples'),
       ]) {
-        expect(settersCalledFor(Settings(database: choice)), <String>[
-          'hegel_settings_set_database',
-        ]);
+        expect(
+          settersCalledFor(Settings(database: choice, databaseKey: 'k')),
+          <String>[
+            'hegel_settings_set_database',
+            'hegel_settings_set_database_key',
+          ],
+        );
       }
     });
   });
@@ -157,6 +161,55 @@ void main() {
       expect(
         () => settersCalledFor(const Settings(database: Database.disabled)),
         returnsNormally,
+      );
+    });
+
+    // Verified against the engine: with no key it writes nothing at all --
+    // not even the database directory -- and replays nothing, so the setting
+    // reads as "persist my counterexamples" and delivers a run identical to
+    // one with no database.
+    test('an enabled database without a key is refused', () {
+      for (final enabled in <Database>[
+        Database.standard,
+        const Database.at('/tmp/examples'),
+      ]) {
+        expect(
+          () => settersCalledFor(Settings(database: enabled)),
+          throwsA(
+            isA<ArgumentError>().having(
+              (ArgumentError e) => e.message.toString(),
+              'message',
+              contains('stores and replays nothing'),
+            ),
+          ),
+          reason: '$enabled without a key does nothing',
+        );
+      }
+      // Switching persistence off is not a request to persist, so it stands
+      // on its own, and a key alone just names entries in the engine's own
+      // default location.
+      expect(
+        () => settersCalledFor(const Settings(database: Database.disabled)),
+        returnsNormally,
+      );
+      expect(
+        () => settersCalledFor(const Settings(databaseKey: 'k')),
+        returnsNormally,
+      );
+    });
+
+    // The mirror image of the empty-path rule above, and the reason the two
+    // cannot share one policy: an empty path means "no database", but an
+    // empty key is just a key.
+    test('an empty database key is a key, not a sentinel', () {
+      expect(
+        settersCalledFor(
+          const Settings(database: Database.standard, databaseKey: ''),
+        ),
+        <String>[
+          'hegel_settings_set_database',
+          'hegel_settings_set_database_key',
+        ],
       );
     });
   });
