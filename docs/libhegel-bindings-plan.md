@@ -93,8 +93,12 @@ Facts verified locally on Dart SDK **3.13.0 stable**:
    **pub user-defines** (`hooks:` → `user_defines:` in the root package's `pubspec.yaml`, read via
    `input.userDefines`), which are declared hook inputs and correctly invalidate the hook cache.
    An environment variable can never configure the hook.
-3. **ffigen** (v21 current) supports `ffi-native` output with `asset-id`, generating `@Native`
-   external functions bound to a code asset — the intended pairing with build hooks.
+3. **ffigen** supports `ffi-native` output with `asset-id`, generating `@Native` external
+   functions bound to a code asset — the intended pairing with build hooks. The usable version is
+   **20.1.1**, not the current 21.x: ffigen 21 depends on `code_assets ^1.1.0`, which cannot
+   resolve alongside the `^2.0.0` that `hooks` 2.2.0 and the `testCodeBuildHook` harness require.
+   ffigen 20.1.1 declares no `code_assets` constraint at all — the `../code_assets` and `../hooks`
+   entries in its pubspec are `dependency_overrides`, which pub ignores for a non-root package.
 4. `package:code_assets` 2.0 API: hooks call
    `output.assets.code.add(CodeAsset(package:, name:, linkMode: DynamicLoadingBundled(), file:))`,
    reading `input.config.code.targetOS/targetArchitecture` and staging files under
@@ -111,8 +115,9 @@ Facts verified locally on Dart SDK **3.13.0 stable**:
   bundled automatically — no install scripts, no manual library management.
 - **Raw bindings:** ffigen in `ffi-native` mode against a vendored copy of the pinned `hegel.h`.
   Generated code is **checked in** (reviewable diffs; libclang needed only to regenerate), with a
-  CI drift check. The ffigen version is pinned exactly so drift diffs represent intentional
-  generator upgrades.
+  CI drift check. The ffigen version is pinned exactly (20.1.1) so drift diffs represent
+  intentional generator upgrades; a bump must be checked against the `code_assets` constraint
+  above, which is what rules out 21.x today.
 - **Package name:** `hegel`, repo `hegel-dart`.
 - **Coverage:** 100% line + branch, enforced in CI once the core vertical slice exists (commit 19
   in §12) and maintained by every later commit. Measured over `lib/` **excluding**
@@ -659,7 +664,7 @@ Coverage bar: 100% line + branch, gated in CI from commit 19 (§12), measured pe
 
 GitHub Actions (invoking `dart` commands directly; the `justfile` mirrors them for local use):
 
-- **lint**: `dart format --output=none --set-exit-code .`, `dart analyze --fatal-infos`.
+- **lint**: `dart format --output=none --set-exit-if-changed .`, `dart analyze --fatal-infos`.
 - **test matrix**: `ubuntu-latest` (linux/amd64), `ubuntu-24.04-arm` (linux/arm64), `macos-14`
   (darwin/arm64), `windows-2025` (windows/amd64), and `windows-11-arm` (windows/arm64) if the
   hosted runner is available to the org. Each job is `dart pub get && dart test` — the hook

@@ -1,0 +1,31 @@
+name: hegel
+description: >-
+  Property-based testing for Dart, powered by the Hegel engine: generation,
+  shrinking, and replay of failing examples via native libhegel bindings.
+version: 0.1.0-dev
+repository: https://github.com/hegeldev/hegel-dart
+homepage: https://hegel.dev
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  # Asset types for the build hook that ships libhegel (hook/build.dart).
+  code_assets: ^2.0.0
+  # SHA-256 verification of downloaded engine binaries; the SDK has no hashing.
+  crypto: ^3.0.7
+  # Pointers, arenas, and native string helpers for the bindings.
+  ffi: ^2.2.0
+  # Build-hook protocol.
+  hooks: ^2.2.0
+  # @internal / @visibleForTesting on the binding surface.
+  meta: ^1.19.0
+
+dev_dependencies:
+  coverage: ^1.15.1
+  # Pinned exactly so drift-check diffs mean an intentional generator upgrade.
+  # 20.1.1 rather than 21.x: ffigen 21 depends on code_assets ^1.1.0, which
+  # conflicts with the ^2.0.0 the build hook needs.
+  ffigen: 20.1.1
+  lints: ^6.1.0
+  test: ^1.31.2

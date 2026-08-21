@@ -1,0 +1,17 @@
+# Dart tooling
+.dart_tool/
+build/
+
+# A library package resolves fresh; the lockfile is not checked in.
+pubspec.lock
+
+# Generated output
+doc/api/
+coverage/
+
+# Engine binaries fetched or built locally. The build hook stages what it
+# needs; nothing native is ever checked in.
+native/
+
+# libhegel's example database, written when a run persists a counterexample.
+.hegel/

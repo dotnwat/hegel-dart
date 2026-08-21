@@ -1,0 +1,71 @@
+# Pre-commit hooks for hegel-dart.
+#
+# Install once per clone:
+#
+#     pre-commit install
+#
+# These run the checks that CI runs and that are cheap and deterministic
+# locally. Deliberately left to CI: the cross-platform test matrix, the AOT
+# bundling smoke, the coverage gate, and the drift check that re-fetches the
+# pinned hegel.h and re-runs ffigen — that one needs the network and libclang,
+# so a hand-edited generated file is caught in CI rather than here. Bypass in
+# an emergency with `git commit --no-verify`.
+
+minimum_pre_commit_version: "3.2.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      # Nothing native is ever committed. hook/build.dart fetches libhegel and
+      # verifies it against the sha256 pins in version.g.dart; a checked-in
+      # binary would bypass that whole chain, so block the file types outright
+      # instead of relying on the size check to notice.
+      - id: no-native-binaries
+        name: no native binaries
+        entry: >-
+          native libraries are never committed — hook/build.dart fetches and
+          verifies them against the pins in version.g.dart
+        language: fail
+        files: '(^|/)native/|\.(so|dylib|dll|a|lib)(\.[0-9]+)*$'
+
+      # Formatting. Rewrites files in place; pre-commit then fails so the
+      # result gets staged.
+      - id: dart-format
+        name: dart format
+        entry: dart format
+        language: system
+        types: [dart]
+
+      # Static analysis under the strict analysis options — the closest thing
+      # a library package has to a build step.
+      - id: dart-analyze
+        name: dart analyze
+        entry: dart analyze --fatal-infos
+        language: system
+        pass_filenames: false
+        types_or: [dart, yaml]
+
+      # The plan's ground rule is that every commit builds and passes tests,
+      # so the suite runs here and not only in CI. From the build-hook commit
+      # onward this also runs hook/build.dart, which fetches the pinned engine
+      # on a cold cache and reuses it per version afterwards. If the
+      # integration suites ever make this too slow to want on every commit,
+      # trim it with test tags rather than dropping the hook.
+      - id: dart-test
+        name: dart test
+        entry: dart test
+        language: system
+        pass_filenames: false
+        types_or: [dart, yaml]

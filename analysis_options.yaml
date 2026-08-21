@@ -1,0 +1,25 @@
+# Analysis configuration for the hegel package.
+#
+# package:lints/recommended, tightened where it matters for a package built on
+# dart:ffi: strict type checking, and lints that catch API-hygiene and
+# control-flow mistakes around native resources.
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - comment_references
+    - directives_ordering
+    - prefer_final_locals
+    - prefer_relative_imports
+    - throw_in_finally
+    - unawaited_futures
+    - unnecessary_parenthesis
+    - use_super_parameters
