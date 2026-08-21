@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'marshal.dart';
 import 'session.dart';
 
@@ -47,7 +48,9 @@ enum RunStatus {
 /// from, released with [dispose].
 final class Failure implements ffi.Finalizable {
   @internal
-  Failure(this._session, this._handle);
+  Failure(this._session, this._handle) {
+    assert(trackHandle(this, 'Failure'));
+  }
 
   final Libhegel _session;
   final ffi.Pointer<raw.hegel_failure_t> _handle;
@@ -106,6 +109,7 @@ final class Failure implements ffi.Finalizable {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_failure_free(_session.context, _handle);
   }
 }
@@ -116,7 +120,9 @@ final class Failure implements ffi.Finalizable {
 /// released separately.
 final class RunResult implements ffi.Finalizable {
   @internal
-  RunResult(this._session, this._handle);
+  RunResult(this._session, this._handle) {
+    assert(trackHandle(this, 'RunResult'));
+  }
 
   final Libhegel _session;
   final ffi.Pointer<raw.hegel_run_result_t> _handle;
@@ -204,6 +210,7 @@ final class RunResult implements ffi.Finalizable {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_run_result_free(_session.context, _handle);
   }
 }

@@ -11,6 +11,7 @@ import 'bindings.g.dart' as raw;
 import 'codec/bigint.dart';
 import 'collection.dart';
 import 'errors.dart';
+import 'leaks.dart';
 import 'marshal.dart';
 import 'pool.dart';
 import 'run.dart';
@@ -85,7 +86,9 @@ final class TestCase implements ffi.Finalizable {
     this.family, {
     this.onComplete,
     this.borrowed = false,
-  });
+  }) {
+    assert(borrowed || trackHandle(this, 'TestCase'));
+  }
 
   /// Whether this is a borrowed view rather than the owning handle.
   ///
@@ -953,6 +956,7 @@ final class TestCase implements ffi.Finalizable {
   void dispose() {
     if (_disposed || borrowed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     session.bindings.hegel_test_case_free(session.context, _handle);
   }
 }

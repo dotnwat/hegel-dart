@@ -34,10 +34,16 @@ Settings settingsFor({int testCases = 50, int seed = 42}) => Settings(
   final session = Libhegel.open(fake);
   addTearDown(session.dispose);
   addTearDown(releaseVersionStrings);
-  return (
-    testCase: TestCase(session, Pointer.fromAddress(0x2000), TestCaseFamily()),
-    fake: fake,
+  final testCase = TestCase(
+    session,
+    Pointer.fromAddress(0x2000),
+    TestCaseFamily(),
   );
+  // Disposed like any other handle, even over a fake: the leak detector
+  // reports whatever is not, and a helper that leaks would report on every
+  // test that used it.
+  addTearDown(testCase.dispose);
+  return (testCase: testCase, fake: fake);
 }
 
 void main() {
@@ -284,6 +290,7 @@ void main() {
         Pointer.fromAddress(0x3000),
         family,
       );
+      addTearDown(clone.dispose);
       expect(
         () => clone.drawBoolean(),
         throwsA(isA<StopTest>()),

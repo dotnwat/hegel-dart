@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'leaks.dart';
 import 'marshal.dart';
 import 'session.dart';
 
@@ -17,7 +18,9 @@ import 'session.dart';
 /// immutable afterwards and may be reused across test cases and runs; release
 /// it with [dispose] once no draw will use it again.
 final class StringGenerator implements ffi.Finalizable {
-  StringGenerator._(this._session, this._handle);
+  StringGenerator._(this._session, this._handle) {
+    assert(trackHandle(this, 'StringGenerator'));
+  }
 
   /// Text drawn from a configurable alphabet.
   ///
@@ -190,6 +193,7 @@ final class StringGenerator implements ffi.Finalizable {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    assert(releaseHandle(this));
     _session.bindings.hegel_string_generator_free(_session.context, _handle);
   }
 }
