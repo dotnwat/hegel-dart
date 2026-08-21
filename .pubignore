@@ -1,6 +1,18 @@
+# Pub reads this *instead of* .gitignore, not in addition to it, so everything
+# .gitignore keeps out of the repository has to be repeated here or a local
+# build artefact ends up in the published archive.
+
+# Generated and local artefacts, mirroring .gitignore.
+build/
+coverage/
+doc/api/
+native/
+.hegel/
+pubspec.lock
+
 # The implementation plan and review notes are for people working on this
-# package, not for people depending on it. Excluding them also keeps `docs/`
-# out of the archive, which pub would otherwise ask to see renamed to `doc/`.
+# package, not for people depending on it. Excluding docs/ also avoids pub
+# asking for it to be renamed to doc/, which would break every reference to it.
 docs/
 
 # Development-only tooling.
