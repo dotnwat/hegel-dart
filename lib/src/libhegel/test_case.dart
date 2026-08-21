@@ -288,6 +288,86 @@ final class TestCase implements ffi.Finalizable {
     });
   }
 
+  /// Draws the sixteen bytes of a UUID, most significant first.
+  ///
+  /// With [version] set, the RFC 4122 version and variant bits are forced;
+  /// without it all 128 bits are drawn, except that the nil UUID never comes
+  /// back. Returned as bytes rather than a formatted string because how to
+  /// present a UUID is the generator layer's decision.
+  Uint8List drawUuid({int? version}) {
+    return _guarded(() {
+      if (version != null && (version < 0 || version > 15)) {
+        throw RangeError.value(version, 'version', 'must be in 0..15');
+      }
+      return using((Arena arena) {
+        final out = arena<ffi.Uint8>(16);
+        session.check(
+          session.bindings.hegel_generate_uuid(
+            session.context,
+            handle,
+            version ?? 0,
+            version != null,
+            out,
+          ),
+          'hegel_generate_uuid',
+        );
+        return Uint8List.fromList(out.asTypedList(16));
+      });
+    });
+  }
+
+  /// Draws the four bytes of an IPv4 address, in network order.
+  Uint8List drawIpv4() => _drawAddress(4, 'hegel_generate_ipv4');
+
+  /// Draws the sixteen bytes of an IPv6 address, in network order.
+  Uint8List drawIpv6() => _drawAddress(16, 'hegel_generate_ipv6');
+
+  Uint8List _drawAddress(int length, String operation) {
+    return _guarded(() {
+      return using((Arena arena) {
+        final out = arena<ffi.Uint8>(length);
+        session.check(
+          length == 4
+              ? session.bindings.hegel_generate_ipv4(
+                  session.context,
+                  handle,
+                  out,
+                )
+              : session.bindings.hegel_generate_ipv6(
+                  session.context,
+                  handle,
+                  out,
+                ),
+          operation,
+        );
+        return Uint8List.fromList(out.asTypedList(length));
+      });
+    });
+  }
+
+  /// Records a numeric observation the engine should steer toward.
+  ///
+  /// Higher is more interesting. Each [label] may be recorded once per test
+  /// case, and the whole thing is a no-op unless the targeting phase is on.
+  void target(double value, {required String label}) {
+    _guarded(() {
+      if (!value.isFinite) {
+        throw ArgumentError.value(value, 'value', 'must be finite');
+      }
+      using((Arena arena) {
+        session.check(
+          session.bindings.hegel_target(
+            session.context,
+            handle,
+            value,
+            toCString(arena, label, 'label'),
+          ),
+          'hegel_target',
+        );
+      });
+    });
+  }
+
   /// Draws a date between [min] and [max] inclusive.
   ///
   /// Shrinks toward 2000-01-01, or the nearest bound when that is out of
