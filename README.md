@@ -34,6 +34,33 @@ their own.
 Supported targets are the ones hegel-rust publishes: Linux x64 and arm64, macOS
 arm64, and Windows x64 and arm64. Intel macOS is not published upstream.
 
+### Compiling an application that uses hegel
+
+Use `dart build cli`, not `dart compile exe`:
+
+```console
+$ dart build cli --target bin/my_app.dart
+```
+
+`dart compile exe` does not run build hooks and does not bundle code assets.
+It compiles without complaint and the binary then fails on its first call into
+the engine:
+
+```
+Couldn't resolve native function 'hegel_version' in 'package:hegel/libhegel':
+No asset with id 'package:hegel/libhegel' found. No available native assets.
+```
+
+`dart build cli` produces a bundle with the engine beside the executable:
+
+```
+bundle/
+  bin/my_app
+  lib/libhegel-linux-amd64.so
+```
+
+Nothing needs doing for `dart run` or `dart test`; both run the hook.
+
 ### Using a locally built engine
 
 To test against an engine you built yourself, name it in the **root package's**
