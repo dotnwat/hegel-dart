@@ -23,6 +23,7 @@ dependencies:
   meta: ^1.19.0
 
 dev_dependencies:
+  async: ^2.13.1
   coverage: ^1.15.1
   # Pinned exactly so drift-check diffs mean an intentional generator upgrade.
   # 20.1.1 rather than 21.x: ffigen 21 depends on code_assets ^1.1.0, which
