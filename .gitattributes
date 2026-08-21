@@ -1,0 +1,9 @@
+# Windows checkouts default to core.autocrlf=true, which rewrites LF to CRLF
+# in the working tree. Two checks here compare a file on disk against freshly
+# generated, always-LF output -- the pin drift test, and the CI drift job that
+# regenerates the header and bindings -- so a CRLF checkout fails them even
+# when nothing has actually drifted. hegel-rust pins its generated header for
+# the same reason.
+#
+# Dart sources are LF everywhere regardless, so normalize the whole tree.
+* text=auto eol=lf
