@@ -181,5 +181,10 @@ jobs:
       - name: Regenerate the bindings
         run: dart run ffigen --config ffigen.yaml
 
+      - name: Regenerate the bindings interface
+        run: |
+          dart run tool/generate_bindings_interface.dart
+          dart format lib/src/libhegel/bindings.dart
+
       - name: Fail on any drift
         run: git diff --exit-code

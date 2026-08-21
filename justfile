@@ -17,3 +17,5 @@ test:
 # CI re-runs this and fails if the checked-in output differs.
 regen:
     dart run ffigen --config ffigen.yaml
+    dart run tool/generate_bindings_interface.dart
+    dart format lib/src/libhegel/bindings.dart
