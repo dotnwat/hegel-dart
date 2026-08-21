@@ -13,6 +13,11 @@ lint:
 test:
     dart test
 
+# Measure coverage and check it against the floors in tool/check_coverage.dart.
+coverage:
+    dart run coverage:test_with_coverage --branch-coverage
+    dart run tool/check_coverage.dart
+
 # Regenerate the raw FFI bindings from the vendored header. Needs libclang;
 # CI re-runs this and fails if the checked-in output differs.
 regen:
