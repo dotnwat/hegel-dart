@@ -110,13 +110,18 @@ final class TestCase implements ffi.Finalizable {
   /// Clones share the case's outcome and budget but draw independently, which
   /// is what lets separate workers drive one case.
   TestCase clone() {
+    _refuseIfComplete();
     final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
     try {
       session.check(
         session.bindings.hegel_test_case_clone(session.context, handle, out),
         'hegel_test_case_clone',
       );
-      return TestCase(session, out.value, family);
+      // Carries the run-completion notification: a clone may be the handle
+      // that reports the case, and the run has to learn about it either way.
+      // Without this a worker's clone completing first leaves the run stuck
+      // in flight, unable to advance or produce a result.
+      return TestCase(session, out.value, family, onComplete: onComplete);
     } finally {
       calloc.free(out);
     }
@@ -198,6 +203,12 @@ final class TestCase implements ffi.Finalizable {
     });
   }
 
+  void _refuseIfComplete() {
+    if (family.completed) {
+      throw StateError('this test case has already been marked complete');
+    }
+  }
+
   /// Runs [draw], latching whichever signal ends the case.
   ///
   /// Once a case has been aborted, later draws re-raise the *same* signal
@@ -206,6 +217,10 @@ final class TestCase implements ffi.Finalizable {
   /// invalid case into an overrun one, and the runner would report the wrong
   /// outcome.
   T _guarded<T>(T Function() draw) {
+    if (_disposed) {
+      throw StateError('this TestCase handle has been disposed');
+    }
+    _refuseIfComplete();
     if (family.abort case final signal?) throw signal;
     try {
       return draw();
@@ -223,10 +238,10 @@ final class TestCase implements ffi.Finalizable {
   /// [forced] overrides the draw without consuming entropy, which the engine
   /// uses when replaying.
   bool drawBoolean({double probability = 0.5, bool? forced}) {
-    if (probability < 0 || probability > 1 || probability.isNaN) {
-      throw RangeError.value(probability, 'probability', 'must be in [0, 1]');
-    }
     return _guarded(() {
+      if (probability < 0 || probability > 1 || probability.isNaN) {
+        throw RangeError.value(probability, 'probability', 'must be in [0, 1]');
+      }
       final out = calloc<ffi.Bool>();
       try {
         session.check(
@@ -249,10 +264,10 @@ final class TestCase implements ffi.Finalizable {
 
   /// Draws an integer in the inclusive range [min] to [max].
   int drawInteger({required int min, required int max}) {
-    if (min > max) {
-      throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
-    }
     return _guarded(() {
+      if (min > max) {
+        throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+      }
       final out = calloc<ffi.Int64>();
       try {
         session.check(
@@ -288,22 +303,22 @@ final class TestCase implements ffi.Finalizable {
     bool excludeMax = false,
     double? smallestNonzeroMagnitude,
   }) {
-    if (width != 32 && width != 64) {
-      throw ArgumentError.value(width, 'width', 'must be 32 or 64');
-    }
-    if (min > max) {
-      throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
-    }
-    final smallest =
-        smallestNonzeroMagnitude ?? (width == 32 ? 1.4e-45 : 5e-324);
-    if (smallest <= 0 || !smallest.isFinite) {
-      throw ArgumentError.value(
-        smallest,
-        'smallestNonzeroMagnitude',
-        'must be positive and finite',
-      );
-    }
     return _guarded(() {
+      if (width != 32 && width != 64) {
+        throw ArgumentError.value(width, 'width', 'must be 32 or 64');
+      }
+      if (min > max) {
+        throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+      }
+      final smallest =
+          smallestNonzeroMagnitude ?? (width == 32 ? 1.4e-45 : 5e-324);
+      if (smallest <= 0 || !smallest.isFinite) {
+        throw ArgumentError.value(
+          smallest,
+          'smallestNonzeroMagnitude',
+          'must be positive and finite',
+        );
+      }
       final out = calloc<ffi.Double>();
       try {
         session.check(

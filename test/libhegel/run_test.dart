@@ -173,6 +173,42 @@ void main() {
     });
   });
 
+  // Both of these were reachable before the guards below existed: a run
+  // could be revived after its handle was freed, and a clone completing the
+  // case left the run unable to advance.
+  group('completion and disposal cannot corrupt the run', () {
+    test('a late completion does not revive a disposed run', () {
+      final run = Run.start(deterministic, session: session);
+      final testCase = run.nextTestCase()!;
+      addTearDown(testCase.dispose);
+
+      run.dispose();
+      expect(run.isDisposed, isTrue);
+
+      // The case still holds a handle and may report itself at any time. If
+      // that moved the run back to idle, the dispose below would free an
+      // already-freed handle.
+      testCase.markComplete(TestCaseStatus.valid);
+      expect(run.isDisposed, isTrue);
+      expect(run.nextTestCase, throwsStateError);
+      expect(run.dispose, returnsNormally);
+    });
+
+    test('a clone completing the case advances the run', () {
+      final run = Run.start(deterministic, session: session);
+      addTearDown(run.dispose);
+      final root = run.nextTestCase()!;
+      addTearDown(root.dispose);
+      final clone = root.clone();
+      addTearDown(clone.dispose);
+
+      // A worker driving a clone may be the one that reports the case, which
+      // the run has to hear about or it stays in flight forever.
+      clone.markComplete(TestCaseStatus.valid);
+      expect(run.nextTestCase, returnsNormally);
+    });
+  });
+
   group('handles', () {
     test('a disposed test case refuses further use', () {
       final run = Run.start(deterministic, session: session);

@@ -196,6 +196,41 @@ void main() {
   // The latch is what keeps unwinding safe: a draw in a finally block must not
   // reach an engine that has already given up on the case, and must not
   // change what kind of ending gets reported.
+  // The guard-first contract says lifecycle misuse visible in Dart raises
+  // StateError without a native call; a completed case is exactly that.
+  group('a completed case', () {
+    test('refuses further draws without calling the engine', () {
+      final built = fakeCase();
+      built.testCase.markComplete(TestCaseStatus.valid);
+      built.fake.clearCalls();
+
+      expect(
+        () => built.testCase.drawInteger(min: 0, max: 1),
+        throwsStateError,
+      );
+      expect(built.testCase.drawBoolean, throwsStateError);
+      expect(built.testCase.drawFloat, throwsStateError);
+      expect(built.fake.calls, isEmpty);
+    });
+
+    test('refuses to be cloned without calling the engine', () {
+      final built = fakeCase();
+      built.testCase.markComplete(TestCaseStatus.valid);
+      built.fake.clearCalls();
+
+      expect(built.testCase.clone, throwsStateError);
+      expect(built.fake.calls, isEmpty);
+    });
+
+    // Reads a runner needs for reporting stay available after completion.
+    test('still answers queries and disposes', () {
+      final built = fakeCase();
+      built.testCase.markComplete(TestCaseStatus.valid);
+      expect(() => built.testCase.isNondeterministic, returnsNormally);
+      expect(built.testCase.dispose, returnsNormally);
+    });
+  });
+
   group('the abort latch', () {
     test('re-raises StopTest without calling the engine again', () {
       final built = fakeCase();
@@ -269,6 +304,29 @@ void main() {
       expect(
         () => built.testCase.markComplete(TestCaseStatus.overrun),
         returnsNormally,
+      );
+    });
+
+    // The latch exists so that a draw made while the stack unwinds cannot
+    // change how the case is reported. An argument complaint from such a draw
+    // would do exactly that, so the latch is consulted first.
+    test('outranks a draw own argument validation', () {
+      final built = fakeCase();
+      built.fake.results['hegel_generate_boolean'] =
+          raw.hegel_result_t.HEGEL_E_ASSUME;
+      expect(built.testCase.drawBoolean, throwsA(isA<AssumptionFailed>()));
+
+      expect(
+        () => built.testCase.drawBoolean(probability: double.nan),
+        throwsA(isA<AssumptionFailed>()),
+      );
+      expect(
+        () => built.testCase.drawInteger(min: 10, max: 0),
+        throwsA(isA<AssumptionFailed>()),
+      );
+      expect(
+        () => built.testCase.drawFloat(width: 16),
+        throwsA(isA<AssumptionFailed>()),
       );
     });
 

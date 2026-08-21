@@ -101,7 +101,13 @@ final class Run implements ffi.Finalizable {
         _session,
         out.value,
         TestCaseFamily(),
-        onComplete: () => _state = _RunState.idle,
+        // Only if the run is still alive. Disposing with a case in flight
+        // frees the handle, and a late completion must not move the run back
+        // to idle: a second dispose would then free it again, and
+        // nextTestCase would read through a dangling pointer.
+        onComplete: () {
+          if (_state != _RunState.disposed) _state = _RunState.idle;
+        },
       );
     } finally {
       calloc.free(out);
