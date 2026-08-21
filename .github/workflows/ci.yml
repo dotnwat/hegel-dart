@@ -245,14 +245,18 @@ jobs:
       - name: Check the package would publish cleanly
         run: dart pub publish --dry-run
 
+      # The dry run prints a tree, not paths, so each file is matched by the
+      # name on its own line. Checking for "hook/build.dart" finds nothing
+      # even when the file is there.
       - name: Check the archive carries what a consumer needs
         run: |
-          archive=$(dart pub publish --dry-run 2>&1)
-          for required in hook/build.dart version.g.dart bindings.g.dart \
-              hegel.h acquire.dart; do
-            echo "$archive" | grep -q "$required" \
+          dart pub publish --dry-run 2>&1 | tee /tmp/archive.txt
+          for required in build.dart version.g.dart bindings.g.dart \
+              hegel.h acquire.dart LICENSE; do
+            grep -qE "── $required( |$)" /tmp/archive.txt \
               || { echo "missing from the archive: $required"; exit 1; }
           done
+          echo "the archive carries the hook, the pin, and the header"
 
       - name: Check the API documentation builds
         run: dart doc --output build/doc
