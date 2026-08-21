@@ -274,6 +274,45 @@ final class TestCase implements ffi.Finalizable {
     });
   }
 
+  /// Draws a byte string whose length is in [minLength] to [maxLength].
+  Uint8List drawBytes({required int minLength, required int maxLength}) {
+    return _guarded(() {
+      if (minLength < 0) {
+        throw RangeError.value(minLength, 'minLength', 'must not be negative');
+      }
+      if (minLength > maxLength) {
+        throw ArgumentError.value(
+          minLength,
+          'minLength',
+          'exceeds maxLength ($maxLength)',
+        );
+      }
+
+      final out = calloc<raw.hegel_generate_bytes_result_t>();
+      try {
+        session.check(
+          session.bindings.hegel_generate_bytes(
+            session.context,
+            handle,
+            minLength,
+            maxLength,
+            out,
+          ),
+          'hegel_generate_bytes',
+        );
+        // Copied before the buffer is released just below; the engine owns
+        // that memory and takes it back with the matching free.
+        return bytesFromBuffer(out.ref.data, out.ref.len);
+      } finally {
+        // calloc zeroed the struct and the ABI documents its free as safe on
+        // a zeroed one, so this runs on the failure path too rather than
+        // needing to know whether the draw got far enough to allocate.
+        session.bindings.hegel_generate_bytes_result_free(session.context, out);
+        calloc.free(out);
+      }
+    });
+  }
+
   /// Draws an integer in the inclusive range [min] to [max], of any width.
   ///
   /// Bounds that fit in a machine integer take the cheaper fixed-width call;
