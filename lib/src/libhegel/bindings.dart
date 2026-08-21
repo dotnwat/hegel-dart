@@ -24,6 +24,12 @@ import 'bindings.g.dart' as raw;
 /// the ABI moves. No parameter is defaulted or absorbed here; convenience
 /// belongs in the safe layer, where it stays visible.
 abstract interface class Bindings {
+  /// Resolves every symbol, throwing if any is missing.
+  ///
+  /// Part of the interface rather than only the native implementation so a
+  /// session opens the same way whichever bindings it was handed.
+  void verifySymbols();
+
   ffi.Pointer<raw.hegel_context_t> hegel_context_new();
   int hegel_context_free(ffi.Pointer<raw.hegel_context_t> ctx);
   ffi.Pointer<ffi.Char> hegel_context_last_error(
@@ -438,6 +444,7 @@ final class NativeBindings implements Bindings {
   /// `@Native` resolution is lazy, so without this an engine missing a symbol
   /// would surface at the first call that needs it — somewhere deep in a test
   /// run — instead of at the moment the session opens.
+  @override
   void verifySymbols() {
     ffi.Native.addressOf<
       ffi.NativeFunction<ffi.Pointer<raw.hegel_context_t> Function()>
