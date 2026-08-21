@@ -16,6 +16,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:hegel/src/libhegel/version.g.dart';
 import 'package:hegel/src/tooling/acquire.dart';
 
 const String repository = 'hegeldev/hegel-rust';
@@ -146,11 +147,26 @@ Future<void> _run(List<String> arguments) async {
   if (arguments.contains('--help') || arguments.contains('-h')) {
     stdout.writeln(
       'Usage: dart run tool/update_libhegel.dart [--version <x.y.z>]\n'
+      '       dart run tool/update_libhegel.dart --artifacts-only\n'
       '\n'
       'Pins the libhegel engine to a hegel-rust release, defaulting to the\n'
       'latest one. Writes $_versionFilePath, $_headerPath, and\n'
-      '$_licensePath.',
+      '$_licensePath.\n'
+      '\n'
+      '--artifacts-only re-fetches the vendored header and licence at the\n'
+      'version already pinned, without downloading any engine. CI runs this\n'
+      'and then diffs, to prove the vendored files still match their tag.',
     );
+    return;
+  }
+
+  if (arguments.contains('--artifacts-only')) {
+    await writePinnedArtifacts(
+      root: _packageRoot(),
+      tag: 'v$libhegelVersion',
+      pin: libhegelPin,
+    );
+    stdout.writeln('refreshed the vendored artifacts for v$libhegelVersion');
     return;
   }
 

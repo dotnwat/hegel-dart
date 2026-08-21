@@ -48,7 +48,106 @@ jobs:
         run: zizmor --format plain .github/
 
   test:
-    name: test
+    name: "test (${{ matrix.target }})"
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      # One platform failing should not hide the others: the whole point of
+      # the matrix is to learn which targets are broken, not just the first.
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-14
+          - target: windows-x64
+            runner: windows-2025
+          - target: windows-arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      # The build hook downloads the pinned engine on a cold cache. Keying on
+      # the generated pin means moving the pin misses the cache, which is
+      # exactly what should happen. Both paths are listed because the hook
+      # derives its cache root from the host: ~/.cache on POSIX, LOCALAPPDATA
+      # on Windows. A path that does not exist on a given runner is ignored.
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/hegel-dart/natives
+            ~/AppData/Local/hegel-dart/natives
+          key: >-
+            libhegel-${{ matrix.target }}-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - run: dart pub get
+
+      - name: Test
+        run: dart test
+
+  # Proves the code asset survives ahead-of-time compilation and is still
+  # resolvable from the bundle, which `dart test` (JIT) cannot show. Runs on
+  # all three operating systems because bundling and dynamic-library lookup
+  # are exactly where they differ.
+  aot:
+    name: "aot (${{ matrix.runner }})"
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-14, windows-2025]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/hegel-dart/natives
+            ~/AppData/Local/hegel-dart/natives
+          key: >-
+            libhegel-aot-${{ matrix.runner }}-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - run: dart pub get
+
+      - name: Build the AOT bundle
+        run: dart build cli --target tool/aot_smoke.dart --output build/smoke
+
+      # The bundle must carry the engine next to the executable, and the
+      # executable exits non-zero unless the engine reports the pinned version.
+      - name: Run the bundled binary
+        run: |
+          binary=build/smoke/bundle/bin/aot_smoke
+          [ -f "$binary.exe" ] && binary="$binary.exe"
+          ls build/smoke/bundle/lib
+          "$binary"
+
+  # Neither the vendored header nor the generated bindings may drift from the
+  # pin without someone committing the change: re-fetch the header and licence
+  # at the pinned tag, regenerate the bindings, and fail on any difference.
+  drift:
+    name: drift
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,18 +160,26 @@ jobs:
         with:
           sdk: stable
 
-      # The build hook downloads the pinned engine on a cold cache. Keying on
-      # the generated pin means moving the pin misses the cache, which is
-      # exactly what should happen.
+      # ffigen parses the header with libclang, which the runner image does
+      # not ship a development package for.
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Cache the pinned libhegel engine
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/hegel-dart/natives
           key: >-
-            libhegel-${{ runner.os }}-${{ runner.arch }}-${{
+            libhegel-drift-${{
             hashFiles('lib/src/libhegel/version.g.dart') }}
 
       - run: dart pub get
 
-      - name: Test
-        run: dart test
+      - name: Re-fetch the vendored header and licence at the pinned tag
+        run: dart run tool/update_libhegel.dart --artifacts-only
+
+      - name: Regenerate the bindings
+        run: dart run ffigen --config ffigen.yaml
+
+      - name: Fail on any drift
+        run: git diff --exit-code
