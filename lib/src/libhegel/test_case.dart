@@ -13,6 +13,7 @@ import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'span.dart';
 import 'string_generator.dart';
 
 /// A drawn calendar date.
@@ -286,6 +287,49 @@ final class TestCase implements ffi.Finalizable {
       }
       return _generateInteger(min, max);
     });
+  }
+
+  /// Opens a span grouping the draws made until [stopSpan].
+  ///
+  /// Spans tell the shrinker which draws belong together, so it can delete or
+  /// simplify a whole compound value rather than picking at its pieces. Every
+  /// compound generator should wrap itself in one.
+  void startSpan(SpanLabel label) {
+    _guarded(() {
+      session.check(
+        session.bindings.hegel_start_span(session.context, handle, label.value),
+        'hegel_start_span',
+      );
+    });
+  }
+
+  /// Closes the most recently opened span.
+  ///
+  /// With [discard] the span is marked rejected -- a filter that did not
+  /// hold -- and the engine retries from where it opened.
+  ///
+  /// Unlike a draw, this is a no-op once the case has been aborted rather than
+  /// an error. Spans are closed from `finally` blocks while the stack unwinds,
+  /// and that unwinding must not itself raise.
+  void stopSpan({bool discard = false}) {
+    if (_disposed || family.completed || family.abort != null) return;
+    session.check(
+      session.bindings.hegel_stop_span(session.context, handle, discard),
+      'hegel_stop_span',
+    );
+  }
+
+  /// Runs [body] inside a span labelled [label].
+  ///
+  /// Closes the span however [body] ends, which is the reason [stopSpan]
+  /// tolerates an aborted case.
+  T span<T>(SpanLabel label, T Function() body) {
+    startSpan(label);
+    try {
+      return body();
+    } finally {
+      stopSpan();
+    }
   }
 
   /// Draws the sixteen bytes of a UUID, most significant first.
