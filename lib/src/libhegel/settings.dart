@@ -255,6 +255,12 @@ final class Settings {
     final context = session.context;
 
     if (testCases case final value?) {
+      // The ABI takes this as uint64, so a negative Dart int arrives as
+      // UINT64_MAX and the engine has no way to see anything wrong. A typo
+      // would quietly become an effectively unbounded run.
+      if (value < 0) {
+        throw RangeError.value(value, 'testCases', 'must not be negative');
+      }
       session.check(
         bindings.hegel_settings_set_test_cases(context, handle, value),
         'hegel_settings_set_test_cases',
@@ -295,7 +301,18 @@ final class Settings {
         final path = switch (value) {
           _StandardDatabase() => ffi.nullptr,
           _DisabledDatabase() => toCString(arena, '', 'database'),
-          _PathDatabase(:final path) => toCString(arena, path, 'database'),
+          // Not simply marshalled: an empty path is the ABI's sentinel for
+          // "no database at all", so letting one through here would silently
+          // turn Database.at into Database.disabled -- easy to hit when the
+          // path comes from an unset configuration value.
+          _PathDatabase(:final path) =>
+            path.isEmpty
+                ? throw ArgumentError.value(
+                    path,
+                    'database',
+                    'is empty; use Database.disabled to turn persistence off',
+                  )
+                : toCString(arena, path, 'database'),
         };
         session.check(
           bindings.hegel_settings_set_database(context, handle, path),

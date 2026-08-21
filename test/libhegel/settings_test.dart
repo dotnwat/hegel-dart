@@ -123,6 +123,40 @@ void main() {
     });
   });
 
+  group('values the engine cannot judge for itself', () {
+    // uint64 on the wire: a negative int arrives as UINT64_MAX, which is a
+    // perfectly valid budget as far as the engine is concerned.
+    test('a negative test-case budget is refused here', () {
+      expect(
+        () => settersCalledFor(const Settings(testCases: -1)),
+        throwsRangeError,
+      );
+      expect(
+        () => settersCalledFor(const Settings(testCases: 0)),
+        returnsNormally,
+      );
+    });
+
+    // An empty path is the ABI's "no database" sentinel, so Database.at('')
+    // would silently mean Database.disabled.
+    test('an empty database path is refused rather than disabling', () {
+      expect(
+        () => settersCalledFor(const Settings(database: Database.at(''))),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError e) => e.message.toString(),
+            'message',
+            contains('Database.disabled'),
+          ),
+        ),
+      );
+      expect(
+        () => settersCalledFor(const Settings(database: Database.disabled)),
+        returnsNormally,
+      );
+    });
+  });
+
   group('against the real engine', () {
     test('applies a full configuration and frees the handle', () {
       final session = Libhegel.open();
