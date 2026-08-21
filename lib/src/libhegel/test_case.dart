@@ -2,11 +2,13 @@
 library;
 
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
 
 import 'bindings.g.dart' as raw;
+import 'codec/bigint.dart';
 import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
@@ -268,23 +270,83 @@ final class TestCase implements ffi.Finalizable {
       if (min > max) {
         throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
       }
-      final out = calloc<ffi.Int64>();
-      try {
+      return _generateInteger(min, max);
+    });
+  }
+
+  /// Draws an integer in the inclusive range [min] to [max], of any width.
+  ///
+  /// Bounds that fit in a machine integer take the cheaper fixed-width call;
+  /// wider ones are exchanged as two's-complement little-endian buffers.
+  BigInt drawBigInteger({required BigInt min, required BigInt max}) {
+    return _guarded(() {
+      if (min > max) {
+        throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+      }
+      if (_fitsInt64(min) && _fitsInt64(max)) {
+        return BigInt.from(_generateInteger(min.toInt(), max.toInt()));
+      }
+
+      final minBytes = twosComplementBytes(min);
+      final maxBytes = twosComplementBytes(max);
+      // The header guarantees a buffer this wide always suffices, since the
+      // drawn value lies between the bounds.
+      final capacity = minBytes.length > maxBytes.length
+          ? minBytes.length
+          : maxBytes.length;
+
+      return using((Arena arena) {
+        ffi.Pointer<ffi.Uint8> copy(Uint8List bytes) {
+          final pointer = arena<ffi.Uint8>(bytes.length);
+          pointer.asTypedList(bytes.length).setAll(0, bytes);
+          return pointer;
+        }
+
+        final out = arena<ffi.Uint8>(capacity);
         session.check(
-          session.bindings.hegel_generate_integer(
+          session.bindings.hegel_generate_integer_big(
             session.context,
             handle,
-            min,
-            max,
+            copy(minBytes),
+            minBytes.length,
+            copy(maxBytes),
+            maxBytes.length,
             out,
+            capacity,
+            arena<ffi.Size>(),
           ),
-          'hegel_generate_integer',
+          'hegel_generate_integer_big',
         );
-        return out.value;
-      } finally {
-        calloc.free(out);
-      }
+        // The engine sign-fills the whole buffer, so the full width decodes
+        // to the drawn value and the returned length is redundant.
+        return bigIntFromTwosComplement(out.asTypedList(capacity));
+      });
     });
+  }
+
+  static final BigInt _int64Min = BigInt.parse('-9223372036854775808');
+  static final BigInt _int64Max = BigInt.parse('9223372036854775807');
+
+  static bool _fitsInt64(BigInt value) =>
+      value >= _int64Min && value <= _int64Max;
+
+  int _generateInteger(int min, int max) {
+    final out = calloc<ffi.Int64>();
+    try {
+      session.check(
+        session.bindings.hegel_generate_integer(
+          session.context,
+          handle,
+          min,
+          max,
+          out,
+        ),
+        'hegel_generate_integer',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
   }
 
   /// Draws a floating-point number.
