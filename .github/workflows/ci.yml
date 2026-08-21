@@ -265,5 +265,16 @@ jobs:
             || { echo "the vendored libhegel licence is missing"; exit 1; }
           echo "archive carries the hook, the pin, the header, both licences"
 
+      # Not `dart doc`: the dartdoc bundled with the SDK crashes on this
+      # package, and the whole binding layer is private so `dart doc` would
+      # document an empty barrel even when it works. tool/doc.dart uses the
+      # pinned dartdoc and exposes the layer for the run only.
       - name: Check the API documentation builds
-        run: dart doc --output build/doc
+        run: dart run tool/doc.dart --output build/doc
+
+      - name: Check the documentation run left nothing behind
+        run: |
+          test ! -e lib/libhegel_docs.dart \
+            || { echo "the temporary doc entry point was not cleaned up"; \
+                 exit 1; }
+          git diff --exit-code

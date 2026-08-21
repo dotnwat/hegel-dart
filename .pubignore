@@ -19,3 +19,6 @@ docs/
 tool/
 .pre-commit-config.yaml
 .gitattributes
+
+# Never shipped, for the same reason .gitignore excludes it.
+lib/libhegel_docs.dart

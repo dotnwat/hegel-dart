@@ -15,3 +15,7 @@ native/
 
 # libhegel's example database, written when a run persists a counterexample.
 .hegel/
+
+# Written for the duration of a documentation run by tool/doc.dart.
+# Never committed: the binding layer is private.
+lib/libhegel_docs.dart

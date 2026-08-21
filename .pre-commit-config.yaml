@@ -57,6 +57,17 @@ repos:
         pass_filenames: false
         types_or: [dart, yaml]
 
+      # Documentation is generated rather than merely checked for syntax:
+      # dartdoc validates every link and reference, which is the only thing
+      # that catches a doc comment pointing at something that has been
+      # renamed or removed. Runs when Dart sources change.
+      - id: dart-docs
+        name: dart docs
+        entry: dart run tool/doc.dart --output build/doc
+        language: system
+        pass_filenames: false
+        types: [dart]
+
       # The plan's ground rule is that every commit builds and passes tests,
       # so the suite runs here and not only in CI. From the build-hook commit
       # onward this also runs hook/build.dart, which fetches the pinned engine
