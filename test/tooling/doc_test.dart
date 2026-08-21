@@ -140,12 +140,82 @@ void main() {
 
     // Recognised by the index dartdoc always writes, so regeneration keeps
     // working without any special case.
-    test('a directory dartdoc wrote before', () {
+    test('a directory this tool wrote before', () {
       final previous = Directory('${root.path}/build/doc')
         ..createSync(recursive: true);
+      File('${previous.path}/.hegel-doc-output').writeAsStringSync('ours');
       File('${previous.path}/index.json').writeAsStringSync('[]');
       File('${previous.path}/stale-page.html').writeAsStringSync('<html>');
       expect(() => check('build/doc'), returnsNormally);
+    });
+  });
+
+  group('refusing directories that only look like documentation', () {
+    // index.json used to be the proof of ownership, which meant anything that
+    // happened to contain one -- a web root, a data dump -- was fair game to
+    // delete recursively. Looking like our output is not being our output.
+    test('a foreign directory carrying an index.json', () {
+      final web = Directory('${root.path}/web')..createSync(recursive: true);
+      File('${web.path}/index.json').writeAsStringSync('{"routes":[]}');
+      File('${web.path}/app.js').writeAsStringSync('// someone\'s work');
+      expect(
+        () => check('web'),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError e) => e.message.toString(),
+            'message',
+            contains('this tool did not write it'),
+          ),
+        ),
+      );
+      expect(File('${web.path}/app.js').existsSync(), isTrue);
+    });
+  });
+
+  group('through dot segments in a path that does not exist yet', () {
+    // The suffix is only normalised by the operating system, so every
+    // character-level comparison against "lib" missed and the tool would
+    // delete the source tree. Same shape as the symlink hole above: a form of
+    // the path that the checks never saw.
+    for (final value in <String>['missing/../lib', 'a/b/../../lib', './lib']) {
+      test('refuses --output $value', () {
+        expect(
+          () => check(value),
+          throwsA(
+            isA<ArgumentError>().having(
+              (ArgumentError e) => e.message.toString(),
+              'message',
+              contains('is inside lib'),
+            ),
+          ),
+          reason: '$value names the source tree once resolved',
+        );
+        // check() only inspects, so asserting the source survived it would
+        // hold no matter what. This instead pins the premise: that the value
+        // really does name lib once resolved, which is what makes refusing it
+        // the right answer.
+        expect(
+          lexicalPath(resolve(value).path),
+          lexicalPath('${root.path}${Platform.pathSeparator}lib'),
+        );
+      });
+    }
+
+    test('refuses a dotted path landing deeper inside a protected name', () {
+      expect(
+        () => check('build/../lib/src'),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError e) => e.message.toString(),
+            'message',
+            contains('is inside lib'),
+          ),
+        ),
+      );
+    });
+
+    test('refuses a dotted path that climbs out to the package itself', () {
+      expect(() => check('build/doc/../..'), throwsA(isA<ArgumentError>()));
     });
   });
 }
