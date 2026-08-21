@@ -181,5 +181,44 @@ jobs:
       - name: Regenerate the bindings
         run: dart run ffigen --config ffigen.yaml
 
+      - name: Regenerate the bindings interface
+        run: |
+          dart run tool/generate_bindings_interface.dart
+          dart format lib/src/libhegel/bindings.dart
+
       - name: Fail on any drift
         run: git diff --exit-code
+
+  # Coverage runs on one platform only. Paths that exist for another -- the
+  # Windows rename fallback, the POSIX mode-bit paths -- are unreachable here,
+  # so the floors sit just below where the suite actually is rather than at
+  # 100%. See tool/check_coverage.dart.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/hegel-dart/natives
+          key: >-
+            libhegel-coverage-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - run: dart pub get
+
+      - name: Measure coverage
+        run: dart run coverage:test_with_coverage --branch-coverage
+
+      - name: Check it against the floors
+        run: dart run tool/check_coverage.dart

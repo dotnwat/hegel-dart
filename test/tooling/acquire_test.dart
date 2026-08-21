@@ -267,6 +267,88 @@ void main() {
     });
   });
 
+  // The real fetch: every other test injects a fake one, so without this the
+  // function that actually downloads engines would ship unexercised.
+  group('httpEngineFetch', () {
+    late HttpServer server;
+    late Uri base;
+
+    setUp(() async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      base = Uri.parse('http://${server.address.address}:${server.port}');
+    });
+
+    tearDown(() => server.close(force: true));
+
+    test('returns the body it was served', () async {
+      server.listen((HttpRequest request) {
+        request.response
+          ..add(engineBytes)
+          ..close();
+      });
+      expect(await httpEngineFetch(base.resolve('/engine')), engineBytes);
+    });
+
+    // Release downloads redirect to a storage host, so following them is not
+    // optional.
+    test('follows a redirect', () async {
+      server.listen((HttpRequest request) {
+        if (request.uri.path == '/engine') {
+          request.response
+            ..statusCode = HttpStatus.found
+            ..headers.set(HttpHeaders.locationHeader, '/elsewhere')
+            ..close();
+          return;
+        }
+        request.response
+          ..add(engineBytes)
+          ..close();
+      });
+      expect(await httpEngineFetch(base.resolve('/engine')), engineBytes);
+    });
+
+    test(
+      'reports a non-OK status rather than returning the error body',
+      () async {
+        server.listen((HttpRequest request) {
+          request.response
+            ..statusCode = HttpStatus.notFound
+            ..write('nope')
+            ..close();
+        });
+        await expectLater(
+          httpEngineFetch(base.resolve('/missing')),
+          throwsA(
+            isA<EngineAcquisitionException>().having(
+              (EngineAcquisitionException e) => e.message,
+              'message',
+              contains('404'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('handles a body arriving in several chunks', () async {
+      server.listen((HttpRequest request) async {
+        request.response.add(engineBytes.sublist(0, 4));
+        await request.response.flush();
+        request.response.add(engineBytes.sublist(4));
+        await request.response.close();
+      });
+      expect(await httpEngineFetch(base.resolve('/chunked')), engineBytes);
+    });
+  });
+
+  group('EngineAcquisitionException', () {
+    test('names itself in its message', () {
+      expect(
+        EngineAcquisitionException('the cache melted').toString(),
+        'EngineAcquisitionException: the cache melted',
+      );
+    });
+  });
+
   group('acquireEngine', () {
     test('downloads, verifies, stages, and fills the cache', () async {
       final log = <Uri>[];
