@@ -27,6 +27,10 @@ enum Phase implements MaskFlag {
   explicit(raw.hegel_phase_t.HEGEL_PHASE_EXPLICIT),
 
   /// Replay counterexamples persisted by previous runs.
+  ///
+  /// Does nothing unless both a [Settings.database] and a
+  /// [Settings.databaseKey] are set. Paired with [shrink] and nothing else,
+  /// a run replays what is stored and generates nothing new.
   reuse(raw.hegel_phase_t.HEGEL_PHASE_REUSE),
 
   /// Generate fresh test cases.
@@ -140,6 +144,22 @@ enum Verbosity {
 
 /// Where discovered counterexamples are persisted.
 ///
+/// Persistence is what makes a failure stick. Generation is random, so a bug
+/// found on one run can simply not come up on the next; with a database the
+/// engine writes the shrunk counterexample to disk and replays it ahead of
+/// anything it generates, so the property keeps failing until the bug is
+/// actually fixed. Once it stops failing, the entry is dropped rather than
+/// replayed forever.
+///
+/// Nothing is stored or replayed without a [Settings.databaseKey], which
+/// scopes entries so that several properties can share one directory.
+/// Enabling a database without one is refused rather than silently doing
+/// nothing.
+///
+/// A damaged or unwritable database is not an error: the engine treats it as
+/// having nothing in it, and a run's outcome never depends on whether the
+/// store worked.
+///
 /// A sealed type because the ABI encodes three different meanings in one
 /// string parameter: a null pointer selects the default location, an empty
 /// string disables persistence, and anything else is a path.
@@ -147,12 +167,15 @@ sealed class Database {
   const Database();
 
   /// The engine's own default location, `./.hegel/examples/`.
+  ///
+  /// Resolved against the working directory, so runs started from different
+  /// directories do not share it.
   static const Database standard = _StandardDatabase();
 
   /// No persistence at all.
   static const Database disabled = _DisabledDatabase();
 
-  /// Persist under [path].
+  /// Persist under [path], which is created if it does not exist.
   const factory Database.at(String path) = _PathDatabase;
 }
 
@@ -177,6 +200,11 @@ final class _PathDatabase extends Database {
 /// environment-aware defaults — under CI it disables the database and turns on
 /// derandomization — and calling a setter with a "default" value would
 /// silently overrule them.
+///
+/// The CI half of that is worth knowing before relying on it: the engine
+/// looks for `CI`, `GITHUB_ACTIONS` and similar, so persistence that works
+/// locally is off by default on a build machine. Anything that wants
+/// counterexamples kept there has to ask for them explicitly.
 final class Settings {
   /// Creates settings, leaving anything unspecified to the engine.
   const Settings({
@@ -213,6 +241,9 @@ final class Settings {
   final bool? derandomize;
 
   /// Where counterexamples are persisted.
+  ///
+  /// Requires [databaseKey]. Left null, the engine picks for itself, and
+  /// what it picks depends on the environment: see the note on [Settings].
   final Database? database;
 
   /// Scopes stored and replayed examples.
