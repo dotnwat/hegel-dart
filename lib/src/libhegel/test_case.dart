@@ -10,6 +10,7 @@ import 'bindings.g.dart' as raw;
 import 'errors.dart';
 import 'marshal.dart';
 import 'session.dart';
+import 'settings.dart';
 
 /// How a test case ended.
 enum TestCaseStatus {
@@ -157,6 +158,44 @@ final class TestCase implements ffi.Finalizable {
     });
     family.completed = true;
     onComplete?.call();
+  }
+
+  /// Replays the test case a reproduce blob encodes.
+  ///
+  /// There is no run and no loop: drive the returned case with the usual
+  /// primitives and decide for yourself whether the failure reproduced. A
+  /// blob whose choices no longer match the caller's generators raises
+  /// [StopTest] from the draw that overruns, and one that is corrupt or from
+  /// an incompatible engine version is rejected outright.
+  static TestCase fromBlob(
+    Settings settings,
+    String blob, {
+    Libhegel? session,
+  }) {
+    final active = session ?? Libhegel.instance;
+    return settings.withNative(active, (
+      ffi.Pointer<raw.hegel_settings_t> handle,
+    ) {
+      final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
+      return using((Arena arena) {
+        try {
+          active.check(
+            active.bindings.hegel_test_case_from_blob(
+              active.context,
+              handle,
+              toCString(arena, blob, 'blob'),
+              ffi.nullptr,
+              ffi.nullptr,
+              out,
+            ),
+            'hegel_test_case_from_blob',
+          );
+          return TestCase(active, out.value, TestCaseFamily());
+        } finally {
+          calloc.free(out);
+        }
+      });
+    });
   }
 
   /// Runs [draw], latching whichever signal ends the case.
