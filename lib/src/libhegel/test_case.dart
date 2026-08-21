@@ -16,6 +16,7 @@ import 'pool.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'span.dart';
+import 'state_machine.dart';
 import 'string_generator.dart';
 
 /// A drawn calendar date.
@@ -77,7 +78,18 @@ final class TestCaseFamily {
 /// the case must be marked complete before the run can advance.
 final class TestCase implements ffi.Finalizable {
   @internal
-  TestCase(this.session, this._handle, this.family, {this.onComplete});
+  TestCase(
+    this.session,
+    this._handle,
+    this.family, {
+    this.onComplete,
+    this.borrowed = false,
+  });
+
+  /// Whether this is a borrowed view rather than the owning handle.
+  ///
+  /// A borrowed view never frees; the isolate that made the handle does.
+  final bool borrowed;
 
   /// The session this handle belongs to.
   @internal
@@ -327,6 +339,117 @@ final class TestCase implements ffi.Finalizable {
       }
     });
   }
+
+  /// Registers a state machine and lets the engine sequence its rules.
+  ///
+  /// [ruleGroups] assigns each rule to a concurrency group, defaulting to one
+  /// group for everything; rules in a group may overlap, rules in different
+  /// groups never do. The engine draws the concurrency level somewhere in
+  /// [minConcurrency] to [maxConcurrency] and the caller must run exactly that
+  /// many workers.
+  ///
+  /// Asking for more than one worker declares the run nondeterministic. The
+  /// first such request on a run raises [AssumptionFailed]: abandon the body
+  /// and report the case invalid, and the engine will allow it from the next
+  /// case onward.
+  StateMachine newStateMachine({
+    required List<String> ruleNames,
+    List<int>? ruleGroups,
+    List<String> invariantNames = const <String>[],
+    int minConcurrency = 1,
+    int maxConcurrency = 1,
+  }) {
+    return _guarded(() {
+      if (ruleNames.isEmpty) {
+        throw ArgumentError.value(ruleNames, 'ruleNames', 'must not be empty');
+      }
+      if (ruleGroups != null && ruleGroups.length != ruleNames.length) {
+        throw ArgumentError.value(
+          ruleGroups,
+          'ruleGroups',
+          'must have one entry per rule (${ruleNames.length})',
+        );
+      }
+      if (ruleGroups != null &&
+          ruleGroups.contains(raw.HEGEL_STATE_MACHINE_DONE)) {
+        // The engine reserves that value to mean "finished", so a group using
+        // it would be indistinguishable from the end of the machine.
+        throw ArgumentError.value(
+          ruleGroups,
+          'ruleGroups',
+          'must not use the reserved termination value',
+        );
+      }
+      if (minConcurrency < 1) {
+        throw RangeError.value(
+          minConcurrency,
+          'minConcurrency',
+          'must be >= 1',
+        );
+      }
+      if (maxConcurrency < minConcurrency) {
+        throw ArgumentError.value(
+          maxConcurrency,
+          'maxConcurrency',
+          'is below minConcurrency ($minConcurrency)',
+        );
+      }
+
+      return using((Arena arena) {
+        final rules = toStringArray(arena, ruleNames, 'ruleNames');
+        final invariants = toStringArray(
+          arena,
+          invariantNames,
+          'invariantNames',
+        );
+        final groups = arena<ffi.Int64>(ruleNames.length);
+        for (var i = 0; i < ruleNames.length; i++) {
+          groups[i] = ruleGroups?[i] ?? 0;
+        }
+
+        final out = arena<ffi.Pointer<raw.hegel_state_machine_t>>();
+        final concurrency = arena<ffi.Int64>();
+        session.check(
+          session.bindings.hegel_new_state_machine(
+            session.context,
+            handle,
+            rules.data,
+            groups,
+            ruleNames.length,
+            invariants.data,
+            invariantNames.length,
+            minConcurrency,
+            maxConcurrency,
+            out,
+            concurrency,
+          ),
+          'hegel_new_state_machine',
+        );
+        return StateMachine(session, out.value, concurrency.value);
+      });
+    });
+  }
+
+  /// An address for this handle, to hand to a worker isolate.
+  ///
+  /// Conveys no ownership: this wrapper still frees the handle, and must
+  /// outlive every borrower.
+  @internal
+  HandleToken get token => HandleToken(_handle.address);
+
+  /// Reconstructs a borrowed view of a test case in another isolate.
+  ///
+  /// The view gets its own family state, since a Dart object cannot be shared
+  /// across isolates. Cancelling a case whose clones are being driven
+  /// elsewhere therefore needs an explicit message; the abort latch only
+  /// covers handles within one isolate.
+  @internal
+  static TestCase adopt(Libhegel session, HandleToken token) => TestCase(
+    session,
+    ffi.Pointer<raw.hegel_test_case_t>.fromAddress(token.address),
+    TestCaseFamily(),
+    borrowed: true,
+  );
 
   /// Creates a set of variable identifiers the engine can choose among.
   Pool newPool() {
@@ -815,7 +938,7 @@ final class TestCase implements ffi.Finalizable {
   /// Idempotent. Each handle holds one reference to the underlying case; the
   /// case itself is released when the last one goes.
   void dispose() {
-    if (_disposed) return;
+    if (_disposed || borrowed) return;
     _disposed = true;
     session.bindings.hegel_test_case_free(session.context, _handle);
   }
