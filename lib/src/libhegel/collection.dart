@@ -21,6 +21,12 @@ import 'test_case.dart';
 ///
 /// The handle is independent of the test case and run it came from. Release it
 /// with [dispose] exactly once, in any order relative to them.
+///
+/// Deliberately not borrowable across isolates, unlike a pool. The ABI takes a
+/// non-blocking lock here and reports contention rather than serializing, so
+/// two workers sharing one collection would see failures rather than a
+/// sensible interleaving. A collection belongs to whichever worker is building
+/// its sequence.
 final class Collection implements ffi.Finalizable {
   @internal
   Collection(this._session, this._handle);

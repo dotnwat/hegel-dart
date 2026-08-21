@@ -7,6 +7,7 @@ import 'dart:isolate';
 import 'package:async/async.dart';
 
 import 'package:hegel/src/libhegel/errors.dart';
+import 'package:hegel/src/libhegel/pool.dart';
 import 'package:hegel/src/libhegel/run.dart';
 import 'package:hegel/src/libhegel/run_result.dart';
 import 'package:hegel/src/libhegel/session.dart';
@@ -27,6 +28,7 @@ class WorkerSetup {
     required this.concurrency,
     required this.caseAddress,
     required this.machineAddress,
+    required this.poolAddress,
     required this.toCoordinator,
   });
 
@@ -34,6 +36,7 @@ class WorkerSetup {
   final int concurrency;
   final int caseAddress;
   final int machineAddress;
+  final int poolAddress;
   final SendPort toCoordinator;
 }
 
@@ -49,10 +52,14 @@ Future<void> runWorker(WorkerSetup setup) async {
     HandleToken(setup.machineAddress),
     setup.concurrency,
   );
+  // A pool may legitimately be driven from several workers: the ABI
+  // serializes operations on it rather than reporting contention.
+  final pool = Pool.adopt(session, HandleToken(setup.poolAddress));
 
   final commands = ReceivePort();
   setup.toCoordinator.send(commands.sendPort);
 
+  var produced = false;
   await for (final Object? command in commands) {
     if (command == 'stop') break;
     final applied = <int>[];
@@ -61,12 +68,34 @@ Future<void> runWorker(WorkerSetup setup) async {
         final rule = machine.nextRule(workerCase, setup.workerIndex);
         if (rule == null) break;
         applied.add(rule);
+        // Rule 0 produces a value; rule 1 reads one back.
+        //
+        // The precondition is checked here rather than by letting the engine
+        // reject an empty pool. An engine-side rejection raises
+        // AssumptionFailed, which latches and ends the whole case -- correctly
+        // so, since a failed assumption means the case is invalid. Reporting
+        // the rule rejected is the mechanism for a precondition the caller can
+        // see, and it only works if nothing has aborted the case first.
+        if (rule == 0) {
+          pool.add(workerCase);
+          produced = true;
+        } else if (produced) {
+          // Never consumed, so once anything is in the pool a read is safe
+          // whichever worker gets there first.
+          pool.draw(workerCase);
+        } else {
+          machine.ruleRejected(workerCase, setup.workerIndex);
+          applied.removeLast();
+        }
       }
     } on Object catch (error) {
-      setup.toCoordinator.send('error: $error');
+      setup.toCoordinator.send(<Object>['error', setup.workerIndex, '$error']);
       continue;
     }
-    setup.toCoordinator.send(applied);
+    // Tagged with who ran them. Replies from separate isolates arrive in
+    // whatever order they finish, so arrival order says nothing about which
+    // worker produced a result.
+    setup.toCoordinator.send(<Object>['applied', setup.workerIndex, applied]);
   }
 
   commands.close();
@@ -181,6 +210,7 @@ void main() {
       final clones = <TestCase>[
         for (var i = 0; i < machine.concurrency; i++) rootCase.clone(),
       ];
+      final pool = rootCase.newPool();
       final fromWorkers = ReceivePort();
       final replies = StreamQueue<Object?>(fromWorkers);
       final isolates = <Isolate>[];
@@ -196,6 +226,7 @@ void main() {
                 concurrency: machine.concurrency,
                 caseAddress: clones[i].token.address,
                 machineAddress: machine.token.address,
+                poolAddress: pool.token.address,
                 toCoordinator: fromWorkers.sendPort,
               ),
             ),
@@ -213,13 +244,14 @@ void main() {
             port.send('round');
           }
           for (var i = 0; i < commandPorts.length; i++) {
-            final reply = await replies.next;
-            expect(
-              reply,
-              isA<List<int>>(),
-              reason: 'a worker reported: $reply',
+            final reply = (await replies.next)! as List<Object?>;
+            expect(reply.first, 'applied', reason: 'a worker reported: $reply');
+            // Credited to the worker that reported it, never to the position
+            // the reply happened to arrive in.
+            final reporter = reply[1]! as int;
+            appliedPerWorker[reporter]!.addAll(
+              (reply[2]! as List<Object?>).cast<int>(),
             );
-            appliedPerWorker[i]!.addAll((reply! as List<Object?>).cast<int>());
           }
         }
 
@@ -237,6 +269,7 @@ void main() {
         for (final clone in clones) {
           clone.dispose();
         }
+        pool.dispose();
         machine.dispose();
         rootCase.dispose();
       }
@@ -255,7 +288,10 @@ void main() {
       total,
       everyElement(allOf(greaterThanOrEqualTo(0), lessThan(rules.length))),
     );
-    // Worker index 1 exists and is used, not just index 0.
+    // Worker index 1 exists and is used, not just index 0. This is only
+    // meaningful because replies are credited by reported index; keyed by
+    // arrival order it would have passed whatever the workers did.
+    expect(appliedPerWorker[0], isNotEmpty);
     expect(appliedPerWorker[1], isNotEmpty);
     expect(result.status, isNot(RunStatus.error));
   }, timeout: const Timeout(Duration(minutes: 2)));
