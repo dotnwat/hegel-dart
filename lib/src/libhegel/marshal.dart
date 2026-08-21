@@ -134,6 +134,29 @@ String? utf8FromCString(ffi.Pointer<ffi.Char> data) =>
 Uint8List bytesFromBuffer(ffi.Pointer<ffi.Uint8> data, int length) =>
     Uint8List.fromList(data.asTypedList(length));
 
+/// Rejects [value] if the ABI would reinterpret it rather than reject it.
+///
+/// dart:ffi narrows silently: a negative int handed to a `uint64_t` parameter
+/// arrives as a huge positive one, and a value wider than a `uint8_t` field
+/// arrives truncated. Either way the engine sees a number the caller never
+/// wrote and has no way to tell it apart from a deliberate one, so the check
+/// has to happen here.
+void checkFitsUnsigned(int value, String name, {int? bits}) {
+  if (value < 0) {
+    throw RangeError.value(value, name, 'must not be negative');
+  }
+  if (bits != null && value > (1 << bits) - 1) {
+    throw RangeError.range(value, 0, (1 << bits) - 1, name);
+  }
+}
+
+/// Rejects [value] unless it lies between [min] and [max] inclusive.
+void checkInRange(int value, String name, int min, int max) {
+  if (value < min || value > max) {
+    throw RangeError.range(value, min, max, name);
+  }
+}
+
 /// Marshals a nullable upper bound, where null means unbounded.
 int sizeOrUnbounded(int? size, String name) {
   if (size == null) return noUpperBound;

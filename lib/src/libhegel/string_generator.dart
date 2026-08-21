@@ -38,6 +38,17 @@ final class StringGenerator implements ffi.Finalizable {
     String? excludeCharacters,
     Libhegel? session,
   }) {
+    // Unsigned on the wire, so a negative size arrives as UINT64_MAX. Asking
+    // the engine for a string of that length aborts the process with an
+    // allocation panic, taking the test runner with it, so nothing here may
+    // reach the ABI unchecked.
+    checkFitsUnsigned(minSize, 'minSize');
+    if (maxSize != null && minSize > maxSize) {
+      throw ArgumentError.value(minSize, 'minSize', 'exceeds maxSize');
+    }
+    checkFitsUnsigned(minCodepoint, 'minCodepoint', bits: 32);
+    checkFitsUnsigned(maxCodepoint, 'maxCodepoint', bits: 32);
+
     final active = session ?? Libhegel.instance;
     return _build(active, (
       ffi.Pointer<ffi.Pointer<raw.hegel_string_generator_t>> out,
@@ -130,6 +141,7 @@ final class StringGenerator implements ffi.Finalizable {
 
   /// Fully-qualified domain names of at most [maxLength] characters.
   factory StringGenerator.domain({int maxLength = 255, Libhegel? session}) {
+    checkFitsUnsigned(maxLength, 'maxLength');
     final active = session ?? Libhegel.instance;
     return _build(
       active,

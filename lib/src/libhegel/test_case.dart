@@ -377,6 +377,8 @@ final class TestCase implements ffi.Finalizable {
     HegelDate max = (year: 9999, month: 12, day: 31),
   }) {
     return _guarded(() {
+      _checkDate(min, 'min');
+      _checkDate(max, 'max');
       return using((Arena arena) {
         final out = arena<raw.hegel_date_t>();
         session.check(
@@ -400,6 +402,8 @@ final class TestCase implements ffi.Finalizable {
     HegelTime max = (hour: 23, minute: 59, second: 59, microsecond: 999999),
   }) {
     return _guarded(() {
+      _checkTime(min, 'min');
+      _checkTime(max, 'max');
       return using((Arena arena) {
         final out = arena<raw.hegel_time_t>();
         session.check(
@@ -429,6 +433,10 @@ final class TestCase implements ffi.Finalizable {
     ),
   }) {
     return _guarded(() {
+      _checkDate(min.date, 'min.date');
+      _checkTime(min.time, 'min.time');
+      _checkDate(max.date, 'max.date');
+      _checkTime(max.time, 'max.time');
       return using((Arena arena) {
         ffi.Pointer<raw.hegel_datetime_t> both(HegelDateTime value) {
           final pointer = arena<raw.hegel_datetime_t>();
@@ -458,6 +466,24 @@ final class TestCase implements ffi.Finalizable {
         return (date: _readDate(out.ref.date), time: _readTime(out.ref.time));
       });
     });
+  }
+
+  /// Rejects a date the struct fields would silently reshape.
+  ///
+  /// Month and day are single bytes, so 257 would arrive as 1 and the engine
+  /// would validate a bound nobody asked for.
+  static void _checkDate(HegelDate value, String name) {
+    checkInRange(value.year, '$name.year', -999999, 999999);
+    checkInRange(value.month, '$name.month', 1, 12);
+    checkInRange(value.day, '$name.day', 1, 31);
+  }
+
+  /// Rejects a time the struct fields would silently reshape.
+  static void _checkTime(HegelTime value, String name) {
+    checkInRange(value.hour, '$name.hour', 0, 23);
+    checkInRange(value.minute, '$name.minute', 0, 59);
+    checkInRange(value.second, '$name.second', 0, 59);
+    checkInRange(value.microsecond, '$name.microsecond', 0, 999999);
   }
 
   static ffi.Pointer<raw.hegel_date_t> _date(Arena arena, HegelDate value) =>
