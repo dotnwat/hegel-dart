@@ -13,6 +13,7 @@ import 'collection.dart';
 import 'errors.dart';
 import 'marshal.dart';
 import 'pool.dart';
+import 'run.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'span.dart';
@@ -207,31 +208,43 @@ final class TestCase implements ffi.Finalizable {
     Settings settings,
     String blob, {
     Libhegel? session,
+    void Function(String line)? onOutput,
   }) {
     final active = session ?? Libhegel.instance;
-    return settings.withNative(active, (
-      ffi.Pointer<raw.hegel_settings_t> handle,
-    ) {
-      final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
-      return using((Arena arena) {
-        try {
-          active.check(
-            active.bindings.hegel_test_case_from_blob(
-              active.context,
-              handle,
-              toCString(arena, blob, 'blob'),
-              ffi.nullptr,
-              ffi.nullptr,
-              out,
-            ),
-            'hegel_test_case_from_blob',
-          );
-          return TestCase(active, out.value, TestCaseFamily());
-        } finally {
-          calloc.free(out);
-        }
+    // The ABI says this callback need not outlive the call, so unlike a run's
+    // it is released as soon as the replay has been set up.
+    final sink = onOutput == null ? null : OutputSink(onOutput);
+    try {
+      return settings.withNative(active, (
+        ffi.Pointer<raw.hegel_settings_t> handle,
+      ) {
+        final out = calloc<ffi.Pointer<raw.hegel_test_case_t>>();
+        return using((Arena arena) {
+          try {
+            active.check(
+              active.bindings.hegel_test_case_from_blob(
+                active.context,
+                handle,
+                toCString(arena, blob, 'blob'),
+                sink?.pointer ?? ffi.nullptr,
+                ffi.nullptr,
+                out,
+              ),
+              'hegel_test_case_from_blob',
+            );
+            if (sink?.failure case final failure?) {
+              active.bindings.hegel_test_case_free(active.context, out.value);
+              Error.throwWithStackTrace(failure.$1, failure.$2);
+            }
+            return TestCase(active, out.value, TestCaseFamily());
+          } finally {
+            calloc.free(out);
+          }
+        });
       });
-    });
+    } finally {
+      sink?.close();
+    }
   }
 
   void _refuseIfComplete() {
