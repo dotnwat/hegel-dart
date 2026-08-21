@@ -222,3 +222,37 @@ jobs:
 
       - name: Check it against the floors
         run: dart run tool/check_coverage.dart
+
+  # The package has to stay publishable, not merely compilable: the hook, the
+  # pin, the vendored header, and the licence all have to be in the archive,
+  # or a consumer gets a package that cannot fetch an engine.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: Check the package would publish cleanly
+        run: dart pub publish --dry-run
+
+      - name: Check the archive carries what a consumer needs
+        run: |
+          archive=$(dart pub publish --dry-run 2>&1)
+          for required in hook/build.dart version.g.dart bindings.g.dart \
+              hegel.h acquire.dart; do
+            echo "$archive" | grep -q "$required" \
+              || { echo "missing from the archive: $required"; exit 1; }
+          done
+
+      - name: Check the API documentation builds
+        run: dart doc --output build/doc

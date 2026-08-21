@@ -1,0 +1,9 @@
+# The implementation plan and review notes are for people working on this
+# package, not for people depending on it. Excluding them also keeps `docs/`
+# out of the archive, which pub would otherwise ask to see renamed to `doc/`.
+docs/
+
+# Development-only tooling.
+tool/
+.pre-commit-config.yaml
+.gitattributes
