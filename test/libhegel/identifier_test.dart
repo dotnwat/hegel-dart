@@ -58,7 +58,13 @@ void main() {
         isFalse,
         reason: 'the nil uuid is never produced',
       );
-      expect(drawn.toSet().length, greaterThan(1));
+      // Compared by content: Uint8List equality is identity-based, so
+      // deduplicating the lists themselves counts one entry per draw and
+      // would pass even if every UUID came back byte-identical.
+      expect(
+        drawn.map((Uint8List uuid) => uuid.join(',')).toSet().length,
+        greaterThan(1),
+      );
     });
 
     test('carry the requested version and variant bits', () {
