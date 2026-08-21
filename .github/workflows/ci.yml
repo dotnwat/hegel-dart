@@ -143,6 +143,25 @@ jobs:
           ls build/smoke/bundle/lib
           "$binary"
 
+      # `dart compile exe` does not run build hooks, so it produces a binary
+      # that compiles cleanly and then cannot find the engine. The README
+      # tells people to use `dart build cli` because of this. If this step
+      # ever fails, the SDK has grown support and that advice should change.
+      - name: Confirm dart compile exe still cannot find the engine
+        run: |
+          dart compile exe tool/aot_smoke.dart -o /tmp/unbundled
+          binary=/tmp/unbundled
+          [ -f "$binary.exe" ] && binary="$binary.exe"
+          if "$binary" > /tmp/unbundled.log 2>&1; then
+            echo "dart compile exe now bundles code assets; update the README"
+            cat /tmp/unbundled.log
+            exit 1
+          fi
+          grep -qi 'native asset' /tmp/unbundled.log \
+            || { echo "failed for an unexpected reason:";
+                 cat /tmp/unbundled.log; exit 1; }
+          echo "still unsupported, as the README says"
+
   # Neither the vendored header nor the generated bindings may drift from the
   # pin without someone committing the change: re-fetch the header and licence
   # at the pinned tag, regenerate the bindings, and fail on any difference.
