@@ -12,3 +12,8 @@ lint:
 # The test suite.
 test:
     dart test
+
+# Regenerate the raw FFI bindings from the vendored header. Needs libclang;
+# CI re-runs this and fails if the checked-in output differs.
+regen:
+    dart run ffigen --config ffigen.yaml
