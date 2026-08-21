@@ -15,6 +15,19 @@ import 'session.dart';
 import 'settings.dart';
 import 'string_generator.dart';
 
+/// A drawn calendar date.
+///
+/// A record rather than a `DateTime` because the engine's range -- years from
+/// -999999 to 999999 -- is wider than `DateTime` accepts, and deciding how to
+/// narrow it is the generator layer's business, not this one's.
+typedef HegelDate = ({int year, int month, int day});
+
+/// A drawn time of day, to microsecond resolution.
+typedef HegelTime = ({int hour, int minute, int second, int microsecond});
+
+/// A drawn date and time of day, with no time zone.
+typedef HegelDateTime = ({HegelDate date, HegelTime time});
+
 /// How a test case ended.
 enum TestCaseStatus {
   /// The body ran to completion without issue.
@@ -274,6 +287,121 @@ final class TestCase implements ffi.Finalizable {
       return _generateInteger(min, max);
     });
   }
+
+  /// Draws a date between [min] and [max] inclusive.
+  ///
+  /// Shrinks toward 2000-01-01, or the nearest bound when that is out of
+  /// range.
+  HegelDate drawDate({
+    HegelDate min = (year: 1, month: 1, day: 1),
+    HegelDate max = (year: 9999, month: 12, day: 31),
+  }) {
+    return _guarded(() {
+      return using((Arena arena) {
+        final out = arena<raw.hegel_date_t>();
+        session.check(
+          session.bindings.hegel_generate_date(
+            session.context,
+            handle,
+            _date(arena, min).ref,
+            _date(arena, max).ref,
+            out,
+          ),
+          'hegel_generate_date',
+        );
+        return _readDate(out.ref);
+      });
+    });
+  }
+
+  /// Draws a time of day between [min] and [max] inclusive.
+  HegelTime drawTime({
+    HegelTime min = (hour: 0, minute: 0, second: 0, microsecond: 0),
+    HegelTime max = (hour: 23, minute: 59, second: 59, microsecond: 999999),
+  }) {
+    return _guarded(() {
+      return using((Arena arena) {
+        final out = arena<raw.hegel_time_t>();
+        session.check(
+          session.bindings.hegel_generate_time(
+            session.context,
+            handle,
+            _time(arena, min).ref,
+            _time(arena, max).ref,
+            out,
+          ),
+          'hegel_generate_time',
+        );
+        return _readTime(out.ref);
+      });
+    });
+  }
+
+  /// Draws a date and time of day between [min] and [max] inclusive.
+  HegelDateTime drawDateTime({
+    HegelDateTime min = (
+      date: (year: 1, month: 1, day: 1),
+      time: (hour: 0, minute: 0, second: 0, microsecond: 0),
+    ),
+    HegelDateTime max = (
+      date: (year: 9999, month: 12, day: 31),
+      time: (hour: 23, minute: 59, second: 59, microsecond: 999999),
+    ),
+  }) {
+    return _guarded(() {
+      return using((Arena arena) {
+        ffi.Pointer<raw.hegel_datetime_t> both(HegelDateTime value) {
+          final pointer = arena<raw.hegel_datetime_t>();
+          pointer.ref.date
+            ..year = value.date.year
+            ..month = value.date.month
+            ..day = value.date.day;
+          pointer.ref.time
+            ..hour = value.time.hour
+            ..minute = value.time.minute
+            ..second = value.time.second
+            ..microsecond = value.time.microsecond;
+          return pointer;
+        }
+
+        final out = arena<raw.hegel_datetime_t>();
+        session.check(
+          session.bindings.hegel_generate_datetime(
+            session.context,
+            handle,
+            both(min).ref,
+            both(max).ref,
+            out,
+          ),
+          'hegel_generate_datetime',
+        );
+        return (date: _readDate(out.ref.date), time: _readTime(out.ref.time));
+      });
+    });
+  }
+
+  static ffi.Pointer<raw.hegel_date_t> _date(Arena arena, HegelDate value) =>
+      arena<raw.hegel_date_t>()
+        ..ref.year = value.year
+        ..ref.month = value.month
+        ..ref.day = value.day;
+
+  static ffi.Pointer<raw.hegel_time_t> _time(Arena arena, HegelTime value) =>
+      arena<raw.hegel_time_t>()
+        ..ref.hour = value.hour
+        ..ref.minute = value.minute
+        ..ref.second = value.second
+        ..ref.microsecond = value.microsecond;
+
+  static HegelDate _readDate(raw.hegel_date_t value) =>
+      (year: value.year, month: value.month, day: value.day);
+
+  static HegelTime _readTime(raw.hegel_time_t value) => (
+    hour: value.hour,
+    minute: value.minute,
+    second: value.second,
+    microsecond: value.microsecond,
+  );
 
   /// Draws a string described by [generator].
   ///
