@@ -631,3 +631,263 @@ final class _NamedStringGenerator extends _NativeStringGenerator {
   @override
   engine.StringGenerator buildNative() => _build(Libhegel.instance);
 }
+
+/// Generates byte strings of [minLength] to [maxLength] bytes.
+///
+/// Bytes rather than "binary", which is what the rest of the family calls
+/// these: Dart's own vocabulary is `BytesBuilder`, `utf8.encode`, and a
+/// `Uint8List` full of them. A null [maxLength] leaves the length to the
+/// engine, which keeps it small on its own.
+///
+/// Values shrink toward the empty string, and toward zero bytes within it.
+Generator<Uint8List> bytes({int minLength = 0, int? maxLength}) {
+  _checkLengths(minLength, maxLength);
+  return _BytesGenerator(minLength, maxLength);
+}
+
+/// The engine's byte draw, with its lengths fixed.
+final class _BytesGenerator extends Generator<Uint8List> {
+  const _BytesGenerator(this._minLength, this._maxLength);
+
+  final int _minLength;
+  final int? _maxLength;
+
+  @override
+  Uint8List generate(TestCase testCase) =>
+      testCase.context.drawBytes(minLength: _minLength, maxLength: _maxLength);
+}
+
+/// Generates dates between [min] and [max] inclusive.
+///
+/// What comes back is a UTC [DateTime] at midnight, since a date is not a
+/// moment and Dart has no type that says so. The bounds are read the same
+/// way: the calendar date a [DateTime] displays, whatever zone it carries,
+/// because a bound of "the first of March" means that date and not an instant
+/// that lands on it somewhere.
+///
+/// The default range is the engine's, years 1 through 9999, which is also as
+/// wide as a sensible [DateTime] goes. Values shrink toward 2000-01-01, or
+/// toward the nearer bound when that is out of range.
+Generator<DateTime> dates({DateTime? min, DateTime? max}) {
+  final low = min == null ? _earliestDate : _dateOf(min);
+  final high = max == null ? _latestDate : _dateOf(max);
+  if (_dateValue(low) > _dateValue(high)) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+  }
+  return _DateGenerator(low, high);
+}
+
+const engine.HegelDate _earliestDate = (year: 1, month: 1, day: 1);
+const engine.HegelDate _latestDate = (year: 9999, month: 12, day: 31);
+
+engine.HegelDate _dateOf(DateTime value) =>
+    (year: value.year, month: value.month, day: value.day);
+
+/// A date as one number, so two of them can be compared.
+int _dateValue(engine.HegelDate date) =>
+    (date.year * 100 + date.month) * 100 + date.day;
+
+/// The engine's date draw, rendered as a UTC midnight.
+final class _DateGenerator extends Generator<DateTime> {
+  const _DateGenerator(this._min, this._max);
+
+  final engine.HegelDate _min;
+  final engine.HegelDate _max;
+
+  @override
+  DateTime generate(TestCase testCase) {
+    final drawn = testCase.context.drawDate(min: _min, max: _max);
+    return DateTime.utc(drawn.year, drawn.month, drawn.day);
+  }
+}
+
+/// Generates times of day between [min] and [max] inclusive.
+///
+/// A time of day as a [Duration] since midnight, which is what Dart has:
+/// there is no time-of-day type in the core libraries, and Flutter's belongs
+/// to Flutter. So the bounds are durations too, and a bound outside a day is
+/// refused rather than wrapped.
+///
+/// Values shrink toward midnight.
+Generator<Duration> times({Duration? min, Duration? max}) {
+  final low = min ?? Duration.zero;
+  final high = max ?? _endOfDay;
+  _checkTimeOfDay(low, 'min');
+  _checkTimeOfDay(high, 'max');
+  if (low > high) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($high)');
+  }
+  return _TimeGenerator(_timeOf(low), _timeOf(high));
+}
+
+const Duration _endOfDay = Duration(
+  hours: 23,
+  minutes: 59,
+  seconds: 59,
+  microseconds: 999999,
+);
+
+void _checkTimeOfDay(Duration value, String name) {
+  if (value < Duration.zero || value > _endOfDay) {
+    throw ArgumentError.value(value, name, 'is not a time of day');
+  }
+}
+
+engine.HegelTime _timeOf(Duration value) => (
+  hour: value.inHours,
+  minute: value.inMinutes % 60,
+  second: value.inSeconds % 60,
+  microsecond: value.inMicroseconds % 1000000,
+);
+
+/// The engine's time draw, rendered as time since midnight.
+final class _TimeGenerator extends Generator<Duration> {
+  const _TimeGenerator(this._min, this._max);
+
+  final engine.HegelTime _min;
+  final engine.HegelTime _max;
+
+  @override
+  Duration generate(TestCase testCase) {
+    final drawn = testCase.context.drawTime(min: _min, max: _max);
+    return Duration(
+      hours: drawn.hour,
+      minutes: drawn.minute,
+      seconds: drawn.second,
+      microseconds: drawn.microsecond,
+    );
+  }
+}
+
+/// Generates dates and times between [min] and [max] inclusive.
+///
+/// UTC [DateTime]s, to microsecond precision, which both sides agree on. They
+/// carry no zone in any meaningful sense -- the engine draws a naive date and
+/// time, and UTC is how Dart says "no zone applied". A generator of instants
+/// in a particular zone is this one mapped into it.
+///
+/// Values shrink toward 2000-01-01 midnight.
+Generator<DateTime> dateTimes({DateTime? min, DateTime? max}) {
+  final low = min == null
+      ? (date: _earliestDate, time: _startOfDay)
+      : _dateTimeOf(min);
+  final high = max == null
+      ? (date: _latestDate, time: _lastMicrosecond)
+      : _dateTimeOf(max);
+  if (min != null && max != null && min.isAfter(max)) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+  }
+  return _DateTimeGenerator(low, high);
+}
+
+const engine.HegelTime _startOfDay = (
+  hour: 0,
+  minute: 0,
+  second: 0,
+  microsecond: 0,
+);
+const engine.HegelTime _lastMicrosecond = (
+  hour: 23,
+  minute: 59,
+  second: 59,
+  microsecond: 999999,
+);
+
+engine.HegelDateTime _dateTimeOf(DateTime value) => (
+  date: _dateOf(value),
+  time: (
+    hour: value.hour,
+    minute: value.minute,
+    second: value.second,
+    microsecond: value.millisecond * 1000 + value.microsecond,
+  ),
+);
+
+/// The engine's date-and-time draw, rendered as a UTC [DateTime].
+final class _DateTimeGenerator extends Generator<DateTime> {
+  const _DateTimeGenerator(this._min, this._max);
+
+  final engine.HegelDateTime _min;
+  final engine.HegelDateTime _max;
+
+  @override
+  DateTime generate(TestCase testCase) {
+    final drawn = testCase.context.drawDateTime(min: _min, max: _max);
+    return DateTime.utc(
+      drawn.date.year,
+      drawn.date.month,
+      drawn.date.day,
+      drawn.time.hour,
+      drawn.time.minute,
+      drawn.time.second,
+      0,
+      drawn.time.microsecond,
+    );
+  }
+}
+
+/// Generates UUIDs in the canonical 8-4-4-4-12 form.
+///
+/// A string, because the SDK has no UUID type and the canonical text is what
+/// gets stored, logged and compared. With [version] set, the version and
+/// variant bits are what RFC 4122 says they are for that version; without it
+/// all 128 bits are drawn, which is how a program that parses UUIDs it did
+/// not make gets tested against ones it did not expect.
+Generator<String> uuids({int? version}) {
+  if (version != null && (version < 0 || version > 15)) {
+    throw RangeError.value(version, 'version', 'must be in 0..15');
+  }
+  return _UuidGenerator(version);
+}
+
+/// The engine's UUID draw, formatted.
+final class _UuidGenerator extends Generator<String> {
+  const _UuidGenerator(this._version);
+
+  final int? _version;
+
+  @override
+  String generate(TestCase testCase) =>
+      _hyphenate(testCase.context.drawUuid(version: _version));
+
+  /// The sixteen bytes as 8-4-4-4-12 hexadecimal.
+  static String _hyphenate(Uint8List value) {
+    final digits = StringBuffer();
+    for (final (int index, int byte) in value.indexed) {
+      if (index == 4 || index == 6 || index == 8 || index == 10) {
+        digits.write('-');
+      }
+      digits.write(byte.toRadixString(16).padLeft(2, '0'));
+    }
+    return digits.toString();
+  }
+}
+
+/// Generates IP addresses of [type], or of either kind when none is given.
+///
+/// Both kinds by default, because a program that has only ever seen IPv4 is
+/// exactly the one worth pointing an IPv6 address at.
+Generator<InternetAddress> ipAddresses({InternetAddressType? type}) =>
+    switch (type) {
+      InternetAddressType.IPv4 => const _AddressGenerator(4),
+      InternetAddressType.IPv6 => const _AddressGenerator(6),
+      // The ONE_OF shape, so the choice shrinks toward the simpler family
+      // the same way any other choice between generators does.
+      _ => oneOf(<Generator<InternetAddress>>[
+        const _AddressGenerator(4),
+        const _AddressGenerator(6),
+      ]),
+    };
+
+/// The engine's address draw, of one family.
+final class _AddressGenerator extends Generator<InternetAddress> {
+  const _AddressGenerator(this._version);
+
+  /// 4 or 6, which is the whole of what an address family is here.
+  final int _version;
+
+  @override
+  InternetAddress generate(TestCase testCase) => InternetAddress.fromRawAddress(
+    _version == 4 ? testCase.context.drawIpv4() : testCase.context.drawIpv6(),
+  );
+}

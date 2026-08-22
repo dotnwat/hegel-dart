@@ -1,8 +1,11 @@
 /// Draw contexts that answer from a script instead of from the engine.
 library;
 
+import 'dart:typed_data';
+
 import 'package:hegel/src/libhegel/span.dart';
 import 'package:hegel/src/libhegel/string_generator.dart';
+import 'package:hegel/src/libhegel/test_case.dart' as engine;
 import 'package:hegel/src/property/test_case.dart';
 
 /// A [DrawContext] with nothing scripted.
@@ -41,6 +44,37 @@ abstract base class FakeDrawContext implements DrawContext {
 
   @override
   String drawString(StringGenerator generator) => _unscripted('a string');
+
+  @override
+  Uint8List drawBytes({required int minLength, int? maxLength}) =>
+      _unscripted('bytes');
+
+  @override
+  engine.HegelDate drawDate({
+    required engine.HegelDate min,
+    required engine.HegelDate max,
+  }) => _unscripted('a date');
+
+  @override
+  engine.HegelTime drawTime({
+    required engine.HegelTime min,
+    required engine.HegelTime max,
+  }) => _unscripted('a time');
+
+  @override
+  engine.HegelDateTime drawDateTime({
+    required engine.HegelDateTime min,
+    required engine.HegelDateTime max,
+  }) => _unscripted('a date and time');
+
+  @override
+  Uint8List drawUuid({int? version}) => _unscripted('a uuid');
+
+  @override
+  Uint8List drawIpv4() => _unscripted('an ipv4 address');
+
+  @override
+  Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
   @override
   void startSpan(SpanLabel label) => calls.add('start ${label.value}');

@@ -1,6 +1,8 @@
 /// The handle a property body draws through, and the seam it draws from.
 library;
 
+import 'dart:typed_data';
+
 import 'package:meta/meta.dart';
 
 import '../libhegel/errors.dart';
@@ -50,6 +52,36 @@ abstract interface class DrawContext {
 
   /// Draws a string described by [generator].
   String drawString(StringGenerator generator);
+
+  /// Draws a byte string of [minLength] to [maxLength] bytes.
+  Uint8List drawBytes({required int minLength, int? maxLength});
+
+  /// Draws a calendar date between [min] and [max] inclusive.
+  engine.HegelDate drawDate({
+    required engine.HegelDate min,
+    required engine.HegelDate max,
+  });
+
+  /// Draws a time of day between [min] and [max] inclusive.
+  engine.HegelTime drawTime({
+    required engine.HegelTime min,
+    required engine.HegelTime max,
+  });
+
+  /// Draws a date and time between [min] and [max] inclusive.
+  engine.HegelDateTime drawDateTime({
+    required engine.HegelDateTime min,
+    required engine.HegelDateTime max,
+  });
+
+  /// Draws the sixteen bytes of a UUID, of [version] where one is asked for.
+  Uint8List drawUuid({int? version});
+
+  /// Draws the four bytes of an IPv4 address.
+  Uint8List drawIpv4();
+
+  /// Draws the sixteen bytes of an IPv6 address.
+  Uint8List drawIpv6();
 
   /// Opens a span grouping the draws made until the matching [stopSpan].
   void startSpan(SpanLabel label);
@@ -102,6 +134,37 @@ final class EngineDrawContext implements DrawContext {
   @override
   String drawString(StringGenerator generator) =>
       testCase.drawString(generator);
+
+  @override
+  Uint8List drawBytes({required int minLength, int? maxLength}) =>
+      testCase.drawBytes(minLength: minLength, maxLength: maxLength);
+
+  @override
+  engine.HegelDate drawDate({
+    required engine.HegelDate min,
+    required engine.HegelDate max,
+  }) => testCase.drawDate(min: min, max: max);
+
+  @override
+  engine.HegelTime drawTime({
+    required engine.HegelTime min,
+    required engine.HegelTime max,
+  }) => testCase.drawTime(min: min, max: max);
+
+  @override
+  engine.HegelDateTime drawDateTime({
+    required engine.HegelDateTime min,
+    required engine.HegelDateTime max,
+  }) => testCase.drawDateTime(min: min, max: max);
+
+  @override
+  Uint8List drawUuid({int? version}) => testCase.drawUuid(version: version);
+
+  @override
+  Uint8List drawIpv4() => testCase.drawIpv4();
+
+  @override
+  Uint8List drawIpv6() => testCase.drawIpv6();
 
   @override
   void startSpan(SpanLabel label) => testCase.startSpan(label);
