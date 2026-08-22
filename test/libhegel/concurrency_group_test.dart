@@ -150,10 +150,17 @@ void main() {
         reason: 'no two rules share a group, so no round can hold two kinds',
       );
 
-      // The comparison is the point: same rules, same seed, same settings,
-      // and the only difference is how they were grouped. Ignore the grouping
-      // and both of these look alike.
-      expect(apart.length, together.length);
+      // The zero above is only worth something if that run did a comparable
+      // amount of work -- a machine that managed two rounds would report zero
+      // for reasons that have nothing to do with grouping.
+      //
+      // A lower bound rather than equality with `together`. The two runs do
+      // come out to the same number of rounds, and did across twenty-five
+      // seeds when checked, but nothing in the ABI promises that the round
+      // count is independent of how the rules were grouped. Asserting it
+      // would mean this test could fail for something it is not about.
+      expect(apart.length, greaterThan(20));
+      expect(together.length, greaterThan(20));
     });
 
     test('defaults to putting every rule in one group', () {
