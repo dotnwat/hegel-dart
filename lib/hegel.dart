@@ -7,4 +7,5 @@
 library;
 
 export 'src/property/generator.dart';
+export 'src/property/runner.dart' show PropertyError, runProperty;
 export 'src/property/test_case.dart' show TestCase;

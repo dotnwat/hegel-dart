@@ -29,6 +29,10 @@ dependencies:
   hooks: ^2.2.0
   # @internal / @visibleForTesting on the binding surface.
   meta: ^1.19.0
+  # Parsing a failure's stack into frames, to name where it came from. Already
+  # present through package:test; the house rule is that nothing is relied on
+  # transitively.
+  stack_trace: ^1.12.0
 
 dev_dependencies:
   async: ^2.13.1
