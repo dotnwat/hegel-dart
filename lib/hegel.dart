@@ -1,7 +1,10 @@
 /// Property-based testing for Dart, powered by the Hegel engine.
 ///
-/// This barrel is intentionally empty for now. The package is built from the
-/// bottom up: the libhegel FFI bindings land first under `lib/src/libhegel/`,
-/// and the public property-testing API that this barrel will export is a later
-/// phase. See `docs/libhegel-bindings-plan.md`.
+/// A property is a claim about every input, checked against inputs the engine
+/// generates. When one fails, the engine shrinks the failing case to the
+/// smallest one that still fails and remembers it, so the property keeps
+/// failing until the bug is fixed.
 library;
+
+export 'src/property/generator.dart';
+export 'src/property/test_case.dart' show TestCase;
