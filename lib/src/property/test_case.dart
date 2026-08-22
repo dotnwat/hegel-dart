@@ -7,6 +7,7 @@ import 'package:meta/meta.dart';
 
 import '../libhegel/collection.dart' as engine;
 import '../libhegel/errors.dart';
+import '../libhegel/settings.dart';
 import '../libhegel/span.dart';
 import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
@@ -105,6 +106,9 @@ abstract interface class DrawContext {
   /// Draws the sixteen bytes of an IPv6 address.
   Uint8List drawIpv6();
 
+  /// Records [value] under [label] as something to steer toward.
+  void target(double value, {required String label});
+
   /// Starts a sequence of [minLength] to [maxLength] elements.
   ///
   /// A null [maxLength] leaves the length unbounded, which is the engine
@@ -193,6 +197,10 @@ final class EngineDrawContext implements DrawContext {
 
   @override
   Uint8List drawIpv6() => testCase.drawIpv6();
+
+  @override
+  void target(double value, {required String label}) =>
+      testCase.target(value, label: label);
 
   @override
   DrawCollection startCollection({required int minLength, int? maxLength}) =>
@@ -356,6 +364,34 @@ final class TestCase {
   void assume(bool condition) {
     if (!condition) throw const AssumptionFailed();
   }
+
+  /// Records [value] as an observation the engine should steer toward.
+  ///
+  /// Higher is more interesting. The engine hill-climbs: cases that scored
+  /// well are the ones it builds the next cases out of, so a property can say
+  /// what "closer to the interesting part of the space" means when the
+  /// interesting part is somewhere random generation rarely reaches. The
+  /// length of a parsed list, the depth of a tree, the difference between two
+  /// balances that should agree -- anything that is a number and that a bug
+  /// would make large.
+  ///
+  /// [label] names the objective and defaults to one, which is what a
+  /// property with a single thing to maximise wants. Each label may be
+  /// recorded once per case; recording two is two objectives, not two
+  /// observations of one.
+  ///
+  /// Steering happens during [Phase.target], which the engine runs unless
+  /// [Settings.phases] leaves it out. Left out, this is a no-op rather than
+  /// an error: a property that reports an observation is still a correct
+  /// property when nobody is steering by it, and a `phases:` set written to
+  /// isolate one part of the loop should not have to be rewritten to keep
+  /// compiling.
+  ///
+  /// [value] has to be finite. There is no ordering that puts NaN anywhere,
+  /// and an infinity is a score nothing can beat, so both would make the
+  /// hill-climb meaningless rather than merely unhelpful.
+  void target(double value, {String label = 'target'}) =>
+      _context.target(value, label: label);
 
   /// Records [message] for the failure report.
   ///

@@ -25,13 +25,14 @@ Settings runSettings({
   int seed = 5,
   Mode? mode,
   Set<HealthCheck>? suppress,
+  Verbosity? verbosity = Verbosity.quiet,
 }) => Settings(
   testCases: testCases,
   mode: mode,
   seed: seed,
   derandomize: true,
   database: Database.disabled,
-  verbosity: Verbosity.quiet,
+  verbosity: verbosity,
   suppressHealthChecks: suppress ?? machineSpeedChecks,
 );
 
@@ -337,6 +338,103 @@ void main() {
     });
   });
 
+  group('a run the engine could not use', () {
+    test(
+      'reaches the caller as an error, in the engine\'s own words',
+      () async {
+        // A body that assumes something no case satisfies, which is a mistake
+        // people make: the engine notices that almost nothing survives and
+        // ends the run rather than reporting a verdict it does not have.
+        await expectLater(
+          runProperty((TestCase testCase) {
+            testCase.draw(integers(min: 0, max: 1000));
+            testCase.assume(false);
+          }, settings: runSettings()),
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              allOf(
+                contains('FilterTooMuch'),
+                contains('filtering out too many inputs'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('is an error rather than a failure, and says nothing else', () async {
+      // The distinction the type carries: package:test renders anything that
+      // is not a TestFailure as an error, which is the severity that fits a
+      // run with no verdict in it. A report block would be worse than
+      // useless here -- there is no counterexample to print.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            testCase.draw(integers(min: 0, max: 1000));
+            testCase.assume(false);
+          },
+          settings: runSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsA(isNot(isA<TestFailure>())),
+      );
+      expect(said.where((String line) => line.contains('draw_')), isEmpty);
+    });
+
+    test('says so even when the engine gave no reason', () {
+      // Not reachable through a run: the engine names every error it
+      // reports. Checked on the text alone so that a run which somehow
+      // reported nothing still says something.
+      expect(
+        PropertyError('the run ended without saying why').message,
+        contains('without saying why'),
+      );
+    });
+  });
+
+  group('whether a test is running', () {
+    test('is true in here, which is what both branches turn on', () {
+      // The one question that decides where a diagnostic goes and where a
+      // failure that is not being thrown goes. Its other answer belongs to a
+      // process with no package:test in it, which is what
+      // test/property/standalone_test.dart drives.
+      expect(insideTest(), isTrue);
+    });
+  });
+
+  group('the default diagnostic sink', () {
+    test('buffers until failure at the verbosity a run usually has', () {
+      for (final Verbosity? verbosity in <Verbosity?>[
+        null,
+        Verbosity.quiet,
+        Verbosity.normal,
+      ]) {
+        expect(
+          defaultDiagnostic(runSettings(verbosity: verbosity)),
+          same(printOnFailure),
+          reason: 'a property that holds is meant to be silent',
+        );
+      }
+    });
+
+    test('prints as it goes once the run was asked to narrate', () {
+      for (final Verbosity verbosity in <Verbosity>[
+        Verbosity.verbose,
+        Verbosity.debug,
+      ]) {
+        expect(
+          defaultDiagnostic(runSettings(verbosity: verbosity)),
+          same(print),
+          reason: 'watching a run happen is the whole point of asking',
+        );
+      }
+    });
+  });
+
   group('a PropertyError', () {
     test('names itself in its message', () {
       // It reaches the reader through whatever prints a thrown object, so
@@ -387,6 +485,39 @@ void main() {
         1,
         reason: 'there was nothing to replay, so the body ran once',
       );
+    });
+  });
+
+  group('a replayed counterexample, as a value', () {
+    const String origin = 'StateError at test/thing_test.dart:9';
+
+    test('hands back the failure and its own stack', () {
+      final error = StateError('the property failed');
+      final stack = StackTrace.current;
+
+      final replayed = replayedFailure(
+        origin: origin,
+        error: error,
+        stack: stack,
+      );
+
+      expect(replayed.error, same(error));
+      expect(replayed.stack, same(stack));
+    });
+
+    test('hands back an explanation when the replay held', () {
+      // The same four endings `raiseReplayed` throws, since it is this that
+      // decides them. Checked once here rather than four times, because what
+      // this adds over the throwing form is that there is something to hold
+      // on to -- which is what a second distinct failure needs.
+      final replayed = replayedFailure(
+        origin: origin,
+        error: null,
+        stack: null,
+      );
+
+      expect(replayed.error, isA<PropertyError>());
+      expect(replayed.stack, isNot(StackTrace.empty));
     });
   });
 
