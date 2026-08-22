@@ -63,4 +63,119 @@ void main() {
       expect(report, contains('value = 4'));
     });
   });
+
+  group('a sampled generator', () {
+    test('shrinks toward the front of the list', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          sampledFrom(<String>['ant', 'bee', 'cow']),
+          name: 'value',
+        );
+        throw StateError('$value is not the one');
+      });
+
+      expect(report, contains("value = 'ant'"));
+    });
+  });
+
+  group('a one-of generator', () {
+    test('shrinks into its first failing option', () async {
+      // Both options can fail, and both shrink to the same number, so the
+      // tag is the whole assertion: the reported case took the first
+      // option, which is where the index shrinks to.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          oneOf(<Generator<String>>[
+            integers(min: 0, max: 1000).map((int n) => 'a$n'),
+            integers(min: 0, max: 1000).map((int n) => 'b$n'),
+          ]),
+          name: 'value',
+        );
+        if (int.parse(value.substring(1)) > 50) {
+          throw StateError('$value is too big');
+        }
+      });
+
+      expect(report, contains("value = 'a51'"));
+    });
+
+    test('stays in the option that fails, and shrinks that one', () async {
+      // Only the second option reaches past ten, so shrinking the choice
+      // toward the first would lose the failure. It has to shrink what is
+      // inside the branch instead, which is what the span is for.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          oneOf(<Generator<int>>[
+            integers(min: 0, max: 10),
+            integers(min: 0, max: 1000),
+          ]),
+          name: 'value',
+        );
+        if (value > 50) throw StateError('$value is too big');
+      });
+
+      expect(report, contains('value = 51'));
+    });
+  });
+
+  group('an optional generator', () {
+    test('shrinks to null when null fails too', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          optional(integers(min: 0, max: 1000)),
+          name: 'value',
+        );
+        if (value == null || value > 50) throw StateError('$value is no good');
+      });
+
+      expect(report, contains('value = null'));
+    });
+
+    test('keeps the value when null does not fail', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          optional(integers(min: 0, max: 1000)),
+          name: 'value',
+        );
+        if (value != null && value > 50) throw StateError('$value is too big');
+      });
+
+      expect(report, contains('value = 51'));
+    });
+  });
+
+  group('a tuple generator', () {
+    test('shrinks each part as far as that part can go', () async {
+      // Eleven and twenty-one: each part walked down to its own smallest
+      // failing value, which is a different number for each. A shrinker
+      // that could only take the pair as a whole would stop somewhere
+      // larger, and one that shrank the parts independently of the failure
+      // would report the pair that no longer fails.
+      final report = await shrunkReport((TestCase testCase) {
+        final (first, second) = testCase.draw(
+          tuple2(integers(min: 0, max: 1000), integers(min: 0, max: 1000)),
+          name: 'pair',
+        );
+        if (first > 10 && second > 20) throw StateError('both are too big');
+      });
+
+      expect(report, contains('pair = (11, 21)'));
+    });
+
+    test('shrinks the parts a failure does not need out of the way', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final (first, second, third) = testCase.draw(
+          tuple3(
+            integers(min: 0, max: 100),
+            integers(min: 0, max: 100),
+            integers(min: 0, max: 100),
+          ),
+          name: 'triple',
+        );
+        if (first + second + third > 30) throw StateError('too big');
+      });
+
+      expect(report, contains('triple = (0, 0, 31)'));
+    });
+  });
 }
