@@ -76,6 +76,17 @@ abstract base class FakeDrawContext implements DrawContext {
   @override
   Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
+  // A fake is not aborted: the latch belongs to a real case, and a test that
+  // wants one says so by overriding this.
+  @override
+  bool get isAborted => false;
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<String> invariantNames,
+  }) => _unscripted('a state machine');
+
   // Recorded rather than refused, like the spans: there is no value to
   // invent, so a fake that has none of these is still a fake that can be
   // asked for one.

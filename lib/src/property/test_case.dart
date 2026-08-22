@@ -1,6 +1,7 @@
 /// The handle a property body draws through, and the seam it draws from.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
@@ -9,6 +10,7 @@ import '../libhegel/collection.dart' as engine;
 import '../libhegel/errors.dart';
 import '../libhegel/settings.dart';
 import '../libhegel/span.dart';
+import '../libhegel/state_machine.dart' as engine;
 import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
@@ -38,6 +40,39 @@ abstract interface class DrawCollection {
   void reject(String why);
 
   /// Releases the collection. Idempotent.
+  void dispose();
+}
+
+/// The engine's rule sequencer, as a stateful driver sees it.
+///
+/// Rule selection belongs to the engine: which rule runs next, how many
+/// steps a case gets, and how a failing sequence shrinks are all its
+/// business, and the driver's job is to run what it is told. Which test case
+/// the decisions are drawn from is the seam's business rather than the
+/// driver's, so unlike the binding layer's [engine.StateMachine] none of
+/// these take one.
+@internal
+abstract interface class DrawMachine {
+  /// How many workers the engine wants pulling rules.
+  ///
+  /// Drawn when the machine was registered. Exactly this many must run.
+  int get concurrency;
+
+  /// Begins the next round, or returns null when the machine is finished.
+  ///
+  /// The value identifies the round's concurrency group.
+  int? nextGroup();
+
+  /// The index of the next rule to run, or null once the round is over.
+  int? nextRule();
+
+  /// Reports the rule most recently handed out as one that could not run.
+  ///
+  /// A rejected rule does not count against the step budget, so the case gets
+  /// the slot back rather than spending it on something it could not do.
+  void ruleRejected();
+
+  /// Releases the machine. Idempotent.
   void dispose();
 }
 
@@ -108,6 +143,23 @@ abstract interface class DrawContext {
 
   /// Records [value] under [label] as something to steer toward.
   void target(double value, {required String label});
+
+  /// Whether a signal has already ended this case.
+  ///
+  /// True once a draw has raised, and the reason the stateful driver can tell
+  /// a precondition from a dead case: an assumption the engine raised has
+  /// latched here and every later draw will raise it again, where one the
+  /// body raised has not and means only that this step was a bad idea.
+  bool get isAborted;
+
+  /// Registers a state machine and lets the engine sequence its rules.
+  ///
+  /// [invariantNames] is registration only: the engine validates them and
+  /// keeps nothing, since running invariants is the driver's job.
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<String> invariantNames,
+  });
 
   /// Starts a sequence of [minLength] to [maxLength] elements.
   ///
@@ -199,6 +251,21 @@ final class EngineDrawContext implements DrawContext {
   Uint8List drawIpv6() => testCase.drawIpv6();
 
   @override
+  bool get isAborted => testCase.family.abort != null;
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<String> invariantNames,
+  }) => _EngineMachine(
+    testCase,
+    testCase.newStateMachine(
+      ruleNames: ruleNames,
+      invariantNames: invariantNames,
+    ),
+  );
+
+  @override
   void target(double value, {required String label}) =>
       testCase.target(value, label: label);
 
@@ -237,6 +304,32 @@ final class _EngineCollection implements DrawCollection {
 
   @override
   void dispose() => _collection.dispose();
+}
+
+/// A [DrawMachine] backed by a real engine state machine.
+///
+/// One worker, which is what a sequential run is: the root handle drives the
+/// rounds and pulls the rules, and worker zero is the only worker there is.
+final class _EngineMachine implements DrawMachine {
+  _EngineMachine(this._testCase, this._machine);
+
+  final engine.TestCase _testCase;
+  final engine.StateMachine _machine;
+
+  @override
+  int get concurrency => _machine.concurrency;
+
+  @override
+  int? nextGroup() => _machine.nextGroup(_testCase);
+
+  @override
+  int? nextRule() => _machine.nextRule(_testCase, 0);
+
+  @override
+  void ruleRejected() => _machine.ruleRejected(_testCase, 0);
+
+  @override
+  void dispose() => _machine.dispose();
 }
 
 /// One test case, as a property body sees it.
@@ -319,6 +412,27 @@ final class TestCase {
     }
   }
 
+  /// Runs [body] inside a span of [label], without hiding what it draws.
+  ///
+  /// [span]'s other half. The engine is told that these draws belong together
+  /// -- a step of a stateful run is a unit the shrinker can delete whole --
+  /// but the report is not, because a rule's draws are not parts of some
+  /// larger value the way a list's elements are. They are the parameters the
+  /// step was called with, and a counterexample that named the steps and hid
+  /// what they were given would say what happened without saying what to.
+  ///
+  /// Asynchronous, since a rule body is: the span stays open across an await,
+  /// which is what the engine expects of a case that is still running.
+  @internal
+  Future<T> step<T>(SpanLabel label, FutureOr<T> Function() body) async {
+    _context.startSpan(label);
+    try {
+      return await body();
+    } finally {
+      _context.stopSpan();
+    }
+  }
+
   /// Runs [body] as one attempt at a value composed under [label].
   ///
   /// [span], with the engine told whether the attempt was worth keeping.
@@ -392,6 +506,17 @@ final class TestCase {
   /// hill-climb meaningless rather than merely unhelpful.
   void target(double value, {String label = 'target'}) =>
       _context.target(value, label: label);
+
+  /// Takes back the last thing [note] recorded.
+  ///
+  /// For a step that was announced and then did not happen: the driver names
+  /// a rule before running it, because the name is what makes a failure
+  /// inside it readable, and a rule that turns itself down leaves a line
+  /// about a step that no one took.
+  @internal
+  void undoNote() {
+    if (_notes.isNotEmpty) _notes.removeLast();
+  }
 
   /// Records [message] for the failure report.
   ///
