@@ -77,6 +77,10 @@ abstract base class FakeDrawContext implements DrawContext {
   Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
   @override
+  DrawCollection startCollection({required int minLength, int? maxLength}) =>
+      _unscripted('a collection');
+
+  @override
   void startSpan(SpanLabel label) => calls.add('start ${label.value}');
 
   @override
@@ -100,6 +104,7 @@ final class ScriptedContext extends FakeDrawContext {
     this.booleans = const <bool>[],
     this.floats = const <double>[],
     this.bigIntegers = const <BigInt>[],
+    this.more = const <bool>[],
   });
 
   /// The values [drawInteger] returns, in order.
@@ -114,10 +119,24 @@ final class ScriptedContext extends FakeDrawContext {
   /// The values [drawBigInteger] returns, in order.
   final List<BigInt> bigIntegers;
 
+  /// The answers [DrawCollection.more] returns, in order.
+  ///
+  /// One queue for every collection this context hands out, rather than one
+  /// per collection: a test that starts two is testing how they interleave,
+  /// and a flat script is how that order is written down.
+  final List<bool> more;
+
   int _next = 0;
   int _nextBoolean = 0;
   int _nextFloat = 0;
   int _nextBigInteger = 0;
+  int _nextMore = 0;
+
+  @override
+  DrawCollection startCollection({required int minLength, int? maxLength}) {
+    calls.add('collection $minLength..${maxLength ?? '*'}');
+    return _ScriptedCollection(this);
+  }
 
   @override
   int drawInteger({required int min, required int max}) {
@@ -155,4 +174,29 @@ final class ScriptedContext extends FakeDrawContext {
     );
     return floats[_nextFloat++];
   }
+}
+
+/// The collection a [ScriptedContext] hands out.
+///
+/// Answers [more] from the context's script and records the rest, so a test
+/// can pin the protocol -- that the reject came after the element's span
+/// closed, that the handle was released -- and not merely the list that came
+/// out the other end.
+final class _ScriptedCollection implements DrawCollection {
+  _ScriptedCollection(this._context);
+
+  final ScriptedContext _context;
+
+  @override
+  bool more() {
+    final answer = _context.more[_context._nextMore++];
+    _context.calls.add('more $answer');
+    return answer;
+  }
+
+  @override
+  void reject(String why) => _context.calls.add('reject $why');
+
+  @override
+  void dispose() => _context.calls.add('free');
 }
