@@ -610,6 +610,60 @@ void main() {
       );
     });
 
+    test('says which worker drew which value', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[0],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('push', (TestCase tc) async {
+            tc.draw(just(tc == testCase ? -1 : 7), name: 'by');
+            await Future<void>.delayed(Duration.zero);
+          }),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      // Two workers running one rule produce two values under one name, and
+      // `by = 7` twice leaves the reader to guess which step each belonged
+      // to.
+      expect(testCase.draws.map((Drawn drawn) => drawn.name), <String>[
+        '[worker 0] by',
+        '[worker 1] by',
+      ]);
+    });
+
+    test('puts what it has to say about the round after the scripts', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await expectLater(
+        runStateful(
+          testCase,
+          _Machine(<Rule>[
+            Rule('first', (TestCase tc) async => throw StateError('from 0')),
+            Rule('second', (TestCase tc) async => throw StateError('from 1')),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      // A line about how the round ended, written before the steps it is
+      // about, reads as a preamble to nothing.
+      expect(testCase.notes.last, startsWith('Worker 1 also ended with'));
+      expect(testCase.notes.first, startsWith('[worker 0]'));
+    });
+
     test('says so when a second worker also ended badly', () async {
       final context = _ConcurrentMachine(<List<int>>[
         <int>[0],

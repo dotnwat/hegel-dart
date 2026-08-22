@@ -210,8 +210,12 @@ Future<void> runStateful(
       // starts, and finding that out after three steps names the wrong step.
       await _check(testCase, invariants);
       while (driver.nextGroup() != null) {
+        // What a round has to say about itself, as opposed to what its
+        // workers did. Collected rather than written as it happens, so that
+        // it can be put after the scripts it is about.
+        final aside = <String>[];
         try {
-          await _round(testCase, driver, rules, workers);
+          await _round(aside, driver, rules, workers);
         } finally {
           // In a finally, because the round that ends badly is the one whose
           // script the reader most needs: a worker's log left behind on the
@@ -220,6 +224,9 @@ Future<void> runStateful(
             for (final _Worker worker in workers) {
               testCase.absorb(worker.testCase, '[worker ${worker.index}]');
             }
+          }
+          for (final String line in aside) {
+            testCase.note(line);
           }
         }
         await _check(testCase, invariants);
@@ -312,8 +319,11 @@ List<int> _groupsOf(List<Rule> rules) {
 }
 
 /// Runs one round, and raises whichever worker's ending speaks for the case.
+///
+/// Anything the round has to say about how it ended goes into [aside], to be
+/// written down once the scripts it refers to are in place.
 Future<void> _round(
-  TestCase root,
+  List<String> aside,
   DrawMachine driver,
   List<Rule> rules,
   List<_Worker> workers,
@@ -335,9 +345,9 @@ Future<void> _round(
   // same moment is a second thing wrong, and a report that mentioned only the
   // one that won would read as though the rest of the run was fine.
   for (final _Ending dropped in raised.skip(1)) {
-    // On the root rather than on a worker: it is not one worker's step, it is
+    // Not tagged as a worker's own line: it is not one worker's step, it is
     // the account of a round that ended two ways at once.
-    root.note('Worker ${dropped.worker} also ended with ${dropped.error}');
+    aside.add('Worker ${dropped.worker} also ended with ${dropped.error}');
   }
   Error.throwWithStackTrace(winner.error, winner.stack);
 }

@@ -667,12 +667,24 @@ final class TestCase {
   /// across in worker order with a tag saying whose they were -- which is the
   /// only honest account of a run whose whole point is that the order was not
   /// fixed.
+  ///
+  /// Drawn values are tagged the same way, and for the same reason: two
+  /// workers running one rule produce two values under one name, and a report
+  /// that showed `by = 1` twice would leave the reader to guess which step
+  /// each belonged to. A draw that was never named keeps its position
+  /// instead, which the merge leaves alone -- naming it after a worker and
+  /// nothing else would trade an ambiguous label for a useless one.
   @internal
   void absorb(TestCase worker, String tag) {
     for (final String note in worker._notes) {
       _notes.add('$tag $note');
     }
-    _draws.addAll(worker._draws);
+    for (final Drawn drawn in worker._draws) {
+      _draws.add((
+        name: drawn.name == null ? null : '$tag ${drawn.name}',
+        value: drawn.value,
+      ));
+    }
     worker._notes.clear();
     worker._draws.clear();
   }
