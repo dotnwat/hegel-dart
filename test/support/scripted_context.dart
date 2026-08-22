@@ -1,8 +1,53 @@
-/// A draw context that answers from a script instead of from the engine.
+/// Draw contexts that answer from a script instead of from the engine.
 library;
 
 import 'package:hegel/src/libhegel/span.dart';
 import 'package:hegel/src/property/test_case.dart';
+
+/// A [DrawContext] with nothing scripted.
+///
+/// The seam grows a method per engine primitive the catalog reaches, and a
+/// fake that spelled every one of them out would be mostly noise -- and would
+/// stop compiling each time the catalog reached one more. So the default for
+/// every draw is to refuse: a fake overrides the draws its test is about, and
+/// a draw it did not expect says so instead of quietly answering zero.
+abstract base class FakeDrawContext implements DrawContext {
+  /// Records every call made, as text, so a test can pin the order as well as
+  /// the count -- a span closed before its body ran would otherwise look
+  /// right.
+  final List<String> calls = <String>[];
+
+  @override
+  int drawInteger({required int min, required int max}) =>
+      _unscripted('an integer');
+
+  @override
+  BigInt drawBigInteger({required BigInt min, required BigInt max}) =>
+      _unscripted('a big integer');
+
+  @override
+  bool drawBoolean({required double probability}) => _unscripted('a boolean');
+
+  @override
+  double drawFloat({
+    required double min,
+    required double max,
+    required bool allowNan,
+    required bool allowInfinity,
+    required bool excludeMin,
+    required bool excludeMax,
+  }) => _unscripted('a float');
+
+  @override
+  void startSpan(SpanLabel label) => calls.add('start ${label.value}');
+
+  @override
+  void stopSpan({bool discard = false}) =>
+      calls.add(discard ? 'discard' : 'stop');
+
+  Never _unscripted(String what) =>
+      throw UnsupportedError('this fake was asked for $what and has none');
+}
 
 /// A [DrawContext] that answers from a script and records what it was asked.
 ///
@@ -10,18 +55,31 @@ import 'package:hegel/src/property/test_case.dart';
 /// point, which is exactly what pinning the bookkeeping around a draw needs:
 /// the third retry of a filter, the branch a choice landed on, the draw that
 /// comes after a span was discarded.
-final class ScriptedContext implements DrawContext {
-  /// Answers draws with [integers], in order.
-  ScriptedContext(this.integers);
+final class ScriptedContext extends FakeDrawContext {
+  /// Answers draws with the values given, each list in its own order.
+  ScriptedContext(
+    this.integers, {
+    this.booleans = const <bool>[],
+    this.floats = const <double>[],
+    this.bigIntegers = const <BigInt>[],
+  });
 
   /// The values [drawInteger] returns, in order.
   final List<int> integers;
 
-  /// Every call made, as text, so a test can pin the order as well as the
-  /// count -- a span closed before its body ran would otherwise look right.
-  final List<String> calls = <String>[];
+  /// The values [drawBoolean] returns, in order.
+  final List<bool> booleans;
+
+  /// The values [drawFloat] returns, in order.
+  final List<double> floats;
+
+  /// The values [drawBigInteger] returns, in order.
+  final List<BigInt> bigIntegers;
 
   int _next = 0;
+  int _nextBoolean = 0;
+  int _nextFloat = 0;
+  int _nextBigInteger = 0;
 
   @override
   int drawInteger({required int min, required int max}) {
@@ -30,9 +88,33 @@ final class ScriptedContext implements DrawContext {
   }
 
   @override
-  void startSpan(SpanLabel label) => calls.add('start ${label.value}');
+  BigInt drawBigInteger({required BigInt min, required BigInt max}) {
+    calls.add('draw big $min..$max');
+    return bigIntegers[_nextBigInteger++];
+  }
 
   @override
-  void stopSpan({bool discard = false}) =>
-      calls.add(discard ? 'discard' : 'stop');
+  bool drawBoolean({required double probability}) {
+    calls.add('draw boolean $probability');
+    return booleans[_nextBoolean++];
+  }
+
+  // Recorded as the whole constraint rather than as a name, because what the
+  // catalog resolves out of an unset allowNan is exactly the thing worth
+  // pinning and the only place it is visible.
+  @override
+  double drawFloat({
+    required double min,
+    required double max,
+    required bool allowNan,
+    required bool allowInfinity,
+    required bool excludeMin,
+    required bool excludeMax,
+  }) {
+    calls.add(
+      'draw float $min..$max nan=$allowNan inf=$allowInfinity '
+      'exclude=$excludeMin/$excludeMax',
+    );
+    return floats[_nextFloat++];
+  }
 }

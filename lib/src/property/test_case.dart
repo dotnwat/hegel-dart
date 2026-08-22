@@ -31,6 +31,22 @@ abstract interface class DrawContext {
   /// Draws an integer between [min] and [max] inclusive.
   int drawInteger({required int min, required int max});
 
+  /// Draws an integer of any width between [min] and [max] inclusive.
+  BigInt drawBigInteger({required BigInt min, required BigInt max});
+
+  /// Draws true with probability [probability].
+  bool drawBoolean({required double probability});
+
+  /// Draws a 64-bit float within the bounds and exclusions given.
+  double drawFloat({
+    required double min,
+    required double max,
+    required bool allowNan,
+    required bool allowInfinity,
+    required bool excludeMin,
+    required bool excludeMax,
+  });
+
   /// Opens a span grouping the draws made until the matching [stopSpan].
   void startSpan(SpanLabel label);
 
@@ -53,6 +69,31 @@ final class EngineDrawContext implements DrawContext {
   @override
   int drawInteger({required int min, required int max}) =>
       testCase.drawInteger(min: min, max: max);
+
+  @override
+  BigInt drawBigInteger({required BigInt min, required BigInt max}) =>
+      testCase.drawBigInteger(min: min, max: max);
+
+  @override
+  bool drawBoolean({required double probability}) =>
+      testCase.drawBoolean(probability: probability);
+
+  @override
+  double drawFloat({
+    required double min,
+    required double max,
+    required bool allowNan,
+    required bool allowInfinity,
+    required bool excludeMin,
+    required bool excludeMax,
+  }) => testCase.drawFloat(
+    min: min,
+    max: max,
+    allowNan: allowNan,
+    allowInfinity: allowInfinity,
+    excludeMin: excludeMin,
+    excludeMax: excludeMax,
+  );
 
   @override
   void startSpan(SpanLabel label) => testCase.startSpan(label);

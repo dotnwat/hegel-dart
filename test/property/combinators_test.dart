@@ -16,27 +16,17 @@ import '../support/scripted_context.dart';
 /// The engine latches the signal that ended a case and re-raises it on the
 /// next draw, so a combinator that retried past one would spin against a case
 /// that is already over. This is that case, without the engine.
-final class _AbortedContext implements DrawContext {
+final class _AbortedContext extends FakeDrawContext {
   _AbortedContext(this.signal);
 
   /// What every draw throws.
   final Object signal;
-
-  /// Every call made, so a test can show that no retry followed.
-  final List<String> calls = <String>[];
 
   @override
   int drawInteger({required int min, required int max}) {
     calls.add('draw');
     throw signal;
   }
-
-  @override
-  void startSpan(SpanLabel label) => calls.add('start ${label.value}');
-
-  @override
-  void stopSpan({bool discard = false}) =>
-      calls.add(discard ? 'discard' : 'stop');
 }
 
 /// A session for the group below, closed when its last test ends.

@@ -222,3 +222,169 @@ final class _Tuple4Generator<A, B, C, D> extends Generator<(A, B, C, D)> {
         return (first, second, third, fourth);
       });
 }
+
+/// Generates true with probability [probability], false otherwise.
+///
+/// Shrinks toward false. A weighted boolean rather than a separate weighted
+/// variant, because the engine takes the probability on the draw and a
+/// generator that hid it would only be a generator with one number missing.
+Generator<bool> booleans({double probability = 0.5}) {
+  if (probability.isNaN || probability < 0 || probability > 1) {
+    throw RangeError.value(probability, 'probability', 'must be in 0..1');
+  }
+  return _BooleanGenerator(probability);
+}
+
+/// The engine's boolean draw, with its probability fixed.
+final class _BooleanGenerator extends Generator<bool> {
+  const _BooleanGenerator(this._probability);
+
+  final double _probability;
+
+  @override
+  bool generate(TestCase testCase) =>
+      testCase.context.drawBoolean(probability: _probability);
+}
+
+/// Generates doubles between [min] and [max].
+///
+/// The bounds are inclusive unless [excludeMin] or [excludeMax] says
+/// otherwise, and default to the infinities, which is this library's way of
+/// saying unbounded.
+///
+/// [allowNan] and [allowInfinity] left out follow Hypothesis, whose rule is
+/// that a bound you did not give cannot be violated: NaN comes up only when
+/// both ends are open, since NaN compares false against every bound and would
+/// otherwise walk through one; an infinity comes up only on an end that is
+/// open, since a closed end already excludes it. Set either explicitly to
+/// override that -- `allowNan: false` on an unbounded generator is the usual
+/// one, for code that has no answer for NaN and no obligation to.
+///
+/// Values shrink toward zero, and simple values -- integers, then halves --
+/// are preferred over ones with long mantissas, so a counterexample tends to
+/// read as a number rather than as noise.
+Generator<double> doubles({
+  double min = double.negativeInfinity,
+  double max = double.infinity,
+  bool? allowNan,
+  bool? allowInfinity,
+  bool excludeMin = false,
+  bool excludeMax = false,
+}) {
+  // NaN is refused as a bound before the comparison below, which it would
+  // pass: every comparison against NaN is false, so an inverted range with a
+  // NaN in it would look like a range in order.
+  if (min.isNaN) throw ArgumentError.value(min, 'min', 'is not a number');
+  if (max.isNaN) throw ArgumentError.value(max, 'max', 'is not a number');
+  if (min > max) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+  }
+  final lowOpen = min == double.negativeInfinity;
+  final highOpen = max == double.infinity;
+  return _DoubleGenerator(
+    min: min,
+    max: max,
+    allowNan: allowNan ?? (lowOpen && highOpen),
+    allowInfinity: allowInfinity ?? (lowOpen || highOpen),
+    excludeMin: excludeMin,
+    excludeMax: excludeMax,
+  );
+}
+
+/// The engine's float draw at double width, with its constraints fixed.
+final class _DoubleGenerator extends Generator<double> {
+  const _DoubleGenerator({
+    required this.min,
+    required this.max,
+    required this.allowNan,
+    required this.allowInfinity,
+    required this.excludeMin,
+    required this.excludeMax,
+  });
+
+  final double min;
+  final double max;
+  final bool allowNan;
+  final bool allowInfinity;
+  final bool excludeMin;
+  final bool excludeMax;
+
+  @override
+  double generate(TestCase testCase) => testCase.context.drawFloat(
+    min: min,
+    max: max,
+    allowNan: allowNan,
+    allowInfinity: allowInfinity,
+    excludeMin: excludeMin,
+    excludeMax: excludeMax,
+  );
+}
+
+/// How wide an unbounded [bigIntegers] reaches.
+///
+/// Two to the 127th, so an unbounded big integer is wider than any fixed-width
+/// integer a program is likely to hold and still a finite range the engine can
+/// distribute over. The sibling frontends land in the same place: an
+/// unbounded big integer means "wide enough that the width is not the thing
+/// under test", not "arbitrarily large".
+final BigInt _bigBound = BigInt.one << 127;
+
+/// Generates integers of any width between [min] and [max] inclusive.
+///
+/// For values past what a Dart int holds. Within that range [integers] says
+/// the same thing more cheaply, and the engine takes the cheaper path anyway
+/// when both bounds fit.
+///
+/// A bound left out is ±2^127. Values shrink toward zero, as [integers] does.
+Generator<BigInt> bigIntegers({BigInt? min, BigInt? max}) {
+  final low = min ?? -_bigBound;
+  final high = max ?? _bigBound;
+  if (low > high) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($high)');
+  }
+  return _BigIntegerGenerator(low, high);
+}
+
+/// The engine's wide-integer draw, with its bounds fixed.
+final class _BigIntegerGenerator extends Generator<BigInt> {
+  const _BigIntegerGenerator(this._min, this._max);
+
+  final BigInt _min;
+  final BigInt _max;
+
+  @override
+  BigInt generate(TestCase testCase) =>
+      testCase.context.drawBigInteger(min: _min, max: _max);
+}
+
+/// Generates durations between [min] and [max] inclusive.
+///
+/// Drawn as a whole number of microseconds, which is what a Dart [Duration]
+/// is. A bound left out is as wide as that representation goes in that
+/// direction, so an unconstrained duration is any duration -- including a
+/// negative one, which [Duration] allows and which a program that subtracts
+/// two timestamps will eventually see. `min: Duration.zero` is how to say
+/// otherwise.
+///
+/// Values shrink toward zero.
+Generator<Duration> durations({Duration? min, Duration? max}) {
+  final low = min ?? const Duration(microseconds: _minInt);
+  final high = max ?? const Duration(microseconds: _maxInt);
+  if (low > high) {
+    throw ArgumentError.value(min, 'min', 'exceeds max ($high)');
+  }
+  return _DurationGenerator(low.inMicroseconds, high.inMicroseconds);
+}
+
+/// A span of time, drawn as the microseconds it is made of.
+final class _DurationGenerator extends Generator<Duration> {
+  const _DurationGenerator(this._min, this._max);
+
+  final int _min;
+  final int _max;
+
+  @override
+  Duration generate(TestCase testCase) => Duration(
+    microseconds: testCase.context.drawInteger(min: _min, max: _max),
+  );
+}
