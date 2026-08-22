@@ -97,14 +97,20 @@ Future<void> runProperty(
     while (true) {
       final engineCase = run.nextTestCase();
       if (engineCase == null) break;
+      final testCase = TestCase(EngineDrawContext(engineCase));
       try {
-        final testCase = TestCase(EngineDrawContext(engineCase));
         final outcome = await _runCase(testCase, body);
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
         engineCase.markComplete(outcome.status, origin: outcome.origin);
       } finally {
+        // Before the engine case rather than after. Nothing in the ABI
+        // requires it -- a pool handle is explicitly independent of the case
+        // it was made on and may be freed in any order -- but this is the
+        // order that stays right as things are added to it: a resource that
+        // does need its case alive would be released while it still is.
+        testCase.release();
         engineCase.dispose();
       }
     }
@@ -306,6 +312,12 @@ Future<Never> _report(
           settings,
           diagnostic,
           stored: false,
+          unstored: result.status == RunStatus.failedNondeterministic
+              ? 'This run did not promise to repeat itself, so no '
+                    'counterexample was kept. What is above is the case that '
+                    'found the failure.'
+              : 'This run produced a single test case, so there was nothing '
+                    'to shrink and no counterexample was kept.',
           heading: _heading(
             index: index,
             count: count,
@@ -323,12 +335,14 @@ Future<Never> _report(
         blob,
         session: session,
       );
+      final minimal = TestCase(EngineDrawContext(replayCase));
       final _Outcome outcome;
       try {
         // Not marked complete: a case from a blob belongs to no run, so there
         // is nothing waiting to be told how it ended.
-        outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
+        outcome = await _runCase(minimal, body);
       } finally {
+        minimal.release();
         replayCase.dispose();
       }
 
@@ -430,6 +444,7 @@ void _describe(
   String? blob,
   bool? printBlob,
   bool stored = true,
+  String? unstored,
   String? heading,
 }) => diagnostic(
   renderFailure(
@@ -440,6 +455,7 @@ void _describe(
       blob: blob,
       printBlob: printBlob,
       stored: stored,
+      unstored: unstored,
     ),
     heading: heading,
   ),
@@ -474,10 +490,12 @@ Future<void> _reproduce(
       'the blob given to reproduce could not be read: ${error.message}',
     );
   }
+  final replayed = TestCase(EngineDrawContext(replayCase));
   final _Outcome outcome;
   try {
-    outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
+    outcome = await _runCase(replayed, body);
   } finally {
+    replayed.release();
     replayCase.dispose();
   }
 

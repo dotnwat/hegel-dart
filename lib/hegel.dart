@@ -29,4 +29,6 @@ export 'src/libhegel/settings.dart'
 export 'src/property/generator.dart';
 export 'src/property/property.dart' show property;
 export 'src/property/runner.dart' show PropertyError, runProperty;
+export 'src/property/stateful.dart'
+    show Invariant, Rule, StateMachine, runStateful;
 export 'src/property/test_case.dart' show TestCase;

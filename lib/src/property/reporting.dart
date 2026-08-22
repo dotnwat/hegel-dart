@@ -233,7 +233,13 @@ List<String> reproductionHints(
   String? blob,
   bool? printBlob,
   bool stored = true,
+  String? unstored,
 }) => <String>[
+  // Why there is nothing to replay, where the reason is worth giving. A
+  // counterexample with no way back is the one a reader most wants to get
+  // back, so being told that this run could not keep one beats being left to
+  // notice that the usual line is missing.
+  ?unstored,
   // [stored] is false where there was no run to keep anything -- a single
   // test case, a nondeterministic one, a bare replay from a blob. Telling
   // the reader their counterexample is waiting for them would send them to a

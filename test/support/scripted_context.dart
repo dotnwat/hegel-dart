@@ -76,6 +76,30 @@ abstract base class FakeDrawContext implements DrawContext {
   @override
   Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
+  // A fake is not aborted: the latch belongs to a real case, and a test that
+  // wants one says so by overriding this.
+  @override
+  bool get isAborted => false;
+
+  // One handle, and a release that gives nothing back: a fake has no engine
+  // behind it, so a clone of one is the same fake seen twice. Enough for the
+  // driver, which only needs somewhere for each worker to draw from.
+  @override
+  ({DrawContext context, void Function() release}) cloneForWorker() =>
+      (context: this, release: () => calls.add('worker released'));
+
+  @override
+  DrawPool startPool() => _unscripted('a pool');
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  }) => _unscripted('a state machine');
+
   // Recorded rather than refused, like the spans: there is no value to
   // invent, so a fake that has none of these is still a fake that can be
   // asked for one.

@@ -1,14 +1,17 @@
 /// The handle a property body draws through, and the seam it draws from.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
 import '../libhegel/collection.dart' as engine;
 import '../libhegel/errors.dart';
+import '../libhegel/pool.dart' as engine;
 import '../libhegel/settings.dart';
 import '../libhegel/span.dart';
+import '../libhegel/state_machine.dart' as engine;
 import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
@@ -38,6 +41,69 @@ abstract interface class DrawCollection {
   void reject(String why);
 
   /// Releases the collection. Idempotent.
+  void dispose();
+}
+
+/// The engine's set of variable identifiers, as a pool sees it.
+///
+/// The engine owns *which* variable a draw picks and how a failing case
+/// shrinks over the set; what a variable is stands outside it entirely. So
+/// the identifiers are all that crosses this seam, and the mapping from one
+/// to a value belongs to whoever asked for it.
+///
+/// Operations take the context to draw from rather than binding one, unlike a
+/// collection: a pool may be driven from any handle of its test-case family,
+/// and once workers have their own clones that is the whole point of it.
+@internal
+abstract interface class DrawPool {
+  /// Adds a fresh identifier, drawn from [from], and returns it.
+  int add(DrawContext from);
+
+  /// Chooses an identifier already in the pool, drawn from [from].
+  ///
+  /// With [consume] the chosen identifier is removed. Raises
+  /// [AssumptionFailed] when the pool is empty.
+  int draw(DrawContext from, {required bool consume});
+
+  /// Releases the pool. Idempotent.
+  void dispose();
+}
+
+/// The engine's rule sequencer, as a stateful driver sees it.
+///
+/// Rule selection belongs to the engine: which rule runs next, how many
+/// steps a case gets, and how a failing sequence shrinks are all its
+/// business, and the driver's job is to run what it is told. Which test case
+/// the decisions are drawn from is the seam's business rather than the
+/// driver's, so unlike the binding layer's [engine.StateMachine] none of
+/// these take one.
+@internal
+abstract interface class DrawMachine {
+  /// How many workers the engine wants pulling rules.
+  ///
+  /// Drawn when the machine was registered. Exactly this many must run.
+  int get concurrency;
+
+  /// Begins the next round, or returns null when the machine is finished.
+  ///
+  /// The value identifies the round's concurrency group.
+  int? nextGroup();
+
+  /// The index of the next rule for [worker], or null once its round is over.
+  ///
+  /// Drawn from [from], the handle that worker was given: one handle may only
+  /// be driven by one worker at a time, so above concurrency one each asks
+  /// through its own clone.
+  int? nextRule(DrawContext from, int worker);
+
+  /// Reports the rule most recently handed to [worker] as one that could not
+  /// run.
+  ///
+  /// A rejected rule does not count against the step budget, so the worker
+  /// gets the slot back rather than spending it on something it could not do.
+  void ruleRejected(DrawContext from, int worker);
+
+  /// Releases the machine. Idempotent.
   void dispose();
 }
 
@@ -108,6 +174,43 @@ abstract interface class DrawContext {
 
   /// Records [value] under [label] as something to steer toward.
   void target(double value, {required String label});
+
+  /// Whether a signal has already ended this case.
+  ///
+  /// True once a draw has raised, and the reason the stateful driver can tell
+  /// a precondition from a dead case: an assumption the engine raised has
+  /// latched here and every later draw will raise it again, where one the
+  /// body raised has not and means only that this step was a bad idea.
+  bool get isAborted;
+
+  /// A second handle onto this case, for a worker to draw from.
+  ///
+  /// Each clone is an independent choice stream over the same case, which is
+  /// what lets workers run at once: a single handle may only be driven by one
+  /// of them at a time. The caller gives the handle back with the `release`
+  /// that comes with it, which is how one is released without every context
+  /// in the seam having to be disposable.
+  ({DrawContext context, void Function() release}) cloneForWorker();
+
+  /// Starts a set of variable identifiers the engine can choose among.
+  DrawPool startPool();
+
+  /// Registers a state machine and lets the engine sequence its rules.
+  ///
+  /// [invariantNames] is registration only: the engine validates them and
+  /// keeps nothing, since running invariants is the driver's job.
+  ///
+  /// `ruleGroups` assigns each rule to a concurrency group: rules in one
+  /// group may overlap, rules in different groups never do. The engine draws
+  /// the number of workers somewhere in the range it is given, and exactly
+  /// that many must run.
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  });
 
   /// Starts a sequence of [minLength] to [maxLength] elements.
   ///
@@ -199,6 +302,36 @@ final class EngineDrawContext implements DrawContext {
   Uint8List drawIpv6() => testCase.drawIpv6();
 
   @override
+  bool get isAborted => testCase.family.abort != null;
+
+  @override
+  DrawPool startPool() => _EnginePool(testCase.newPool());
+
+  @override
+  ({DrawContext context, void Function() release}) cloneForWorker() {
+    final clone = testCase.clone();
+    return (context: EngineDrawContext(clone), release: clone.dispose);
+  }
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  }) => _EngineMachine(
+    testCase,
+    testCase.newStateMachine(
+      ruleNames: ruleNames,
+      ruleGroups: ruleGroups,
+      invariantNames: invariantNames,
+      minConcurrency: minConcurrency,
+      maxConcurrency: maxConcurrency,
+    ),
+  );
+
+  @override
   void target(double value, {required String label}) =>
       testCase.target(value, label: label);
 
@@ -239,6 +372,66 @@ final class _EngineCollection implements DrawCollection {
   void dispose() => _collection.dispose();
 }
 
+/// A [DrawPool] backed by a real engine pool.
+final class _EnginePool implements DrawPool {
+  _EnginePool(this._pool);
+
+  final engine.Pool _pool;
+
+  @override
+  int add(DrawContext from) => _pool.add(_caseOf(from));
+
+  @override
+  int draw(DrawContext from, {required bool consume}) =>
+      _pool.draw(_caseOf(from), consume: consume);
+
+  @override
+  void dispose() => _pool.dispose();
+
+  /// The engine case behind [from].
+  ///
+  /// A pool belongs to a test-case family and only a handle of that family
+  /// can drive it, so a pool the engine made is only ever driven by a context
+  /// over the engine -- the root case that created it, or a worker's clone of
+  /// that same case. Anything else is a pool handed to a context that could
+  /// not have made it, which is a mistake in this package rather than
+  /// something a caller can cause.
+  engine.TestCase _caseOf(DrawContext from) =>
+      (from as EngineDrawContext).testCase;
+}
+
+/// A [DrawMachine] backed by a real engine state machine.
+///
+/// Rounds are begun on the root case, the one handle every worker shares;
+/// rules are pulled through whichever handle the worker was given.
+final class _EngineMachine implements DrawMachine {
+  _EngineMachine(this._root, this._machine);
+
+  final engine.TestCase _root;
+  final engine.StateMachine _machine;
+
+  @override
+  int get concurrency => _machine.concurrency;
+
+  @override
+  int? nextGroup() => _machine.nextGroup(_root);
+
+  @override
+  int? nextRule(DrawContext from, int worker) =>
+      _machine.nextRule(_caseOf(from), worker);
+
+  @override
+  void ruleRejected(DrawContext from, int worker) =>
+      _machine.ruleRejected(_caseOf(from), worker);
+
+  @override
+  void dispose() => _machine.dispose();
+
+  /// The engine case behind [from]; see [_EnginePool._caseOf].
+  engine.TestCase _caseOf(DrawContext from) =>
+      (from as EngineDrawContext).testCase;
+}
+
 /// One test case, as a property body sees it.
 ///
 /// The body receives one of these and draws every value it needs from it. A
@@ -264,6 +457,7 @@ final class TestCase {
 
   final List<Drawn> _draws = <Drawn>[];
   final List<String> _notes = <String>[];
+  final List<void Function()> _releases = <void Function()>[];
 
   /// The seam generators draw from.
   @internal
@@ -278,6 +472,30 @@ final class TestCase {
   /// What the body recorded with [note], in order.
   @internal
   List<String> get notes => _notes;
+
+  /// Runs [release] when this case ends, whatever ends it.
+  ///
+  /// For the engine handles whose life is the case rather than the draw. A
+  /// collection belongs to the one list it is building and is released where
+  /// it was made; a pool outlives every draw taken from it and would
+  /// otherwise be released nowhere, since a property body has no place to put
+  /// a `finally` that the runner does not already own.
+  @internal
+  void onRelease(void Function() release) => _releases.add(release);
+
+  /// Releases what this case handed out. Idempotent.
+  ///
+  /// Called by the runner when the case is over. Everything is released even
+  /// if one of them throws, because a handle left behind is a handle left
+  /// behind whatever the reason.
+  @internal
+  void release() {
+    final pending = List<void Function()>.of(_releases);
+    _releases.clear();
+    for (final void Function() release in pending) {
+      release();
+    }
+  }
 
   /// Draws a value from [generator].
   ///
@@ -315,6 +533,27 @@ final class TestCase {
       return body();
     } finally {
       _depth--;
+      _context.stopSpan();
+    }
+  }
+
+  /// Runs [body] inside a span of [label], without hiding what it draws.
+  ///
+  /// [span]'s other half. The engine is told that these draws belong together
+  /// -- a step of a stateful run is a unit the shrinker can delete whole --
+  /// but the report is not, because a rule's draws are not parts of some
+  /// larger value the way a list's elements are. They are the parameters the
+  /// step was called with, and a counterexample that named the steps and hid
+  /// what they were given would say what happened without saying what to.
+  ///
+  /// Asynchronous, since a rule body is: the span stays open across an await,
+  /// which is what the engine expects of a case that is still running.
+  @internal
+  Future<T> step<T>(SpanLabel label, FutureOr<T> Function() body) async {
+    _context.startSpan(label);
+    try {
+      return await body();
+    } finally {
       _context.stopSpan();
     }
   }
@@ -392,6 +631,35 @@ final class TestCase {
   /// hill-climb meaningless rather than merely unhelpful.
   void target(double value, {String label = 'target'}) =>
       _context.target(value, label: label);
+
+  /// Takes back the last thing [note] recorded.
+  ///
+  /// For a step that was announced and then did not happen: the driver names
+  /// a rule before running it, because the name is what makes a failure
+  /// inside it readable, and a rule that turns itself down leaves a line
+  /// about a step that no one took.
+  @internal
+  void undoNote() {
+    if (_notes.isNotEmpty) _notes.removeLast();
+  }
+
+  /// Takes what [worker] drew and noted into this case, tagged with [tag].
+  ///
+  /// A worker keeps its own log while a round is running, because two of them
+  /// writing into one list interleave into something no one can read. At the
+  /// join point the round is over and the order is settled, so the lines come
+  /// across in worker order with a tag saying whose they were -- which is the
+  /// only honest account of a run whose whole point is that the order was not
+  /// fixed.
+  @internal
+  void absorb(TestCase worker, String tag) {
+    for (final String note in worker._notes) {
+      _notes.add('$tag $note');
+    }
+    _draws.addAll(worker._draws);
+    worker._notes.clear();
+    worker._draws.clear();
+  }
 
   /// Records [message] for the failure report.
   ///
