@@ -1,5 +1,21 @@
 @Tags(<String>['e2e'])
 @TestOn('vm')
+// Windows cannot run these at all, and not for a reason about this package.
+// Every `dart test` copies the engine into `.dart_tool/lib/` before it starts,
+// and Windows will not let it delete a DLL that the outer `dart test` -- the
+// one running this file -- already has loaded:
+//
+//     PathAccessException: Cannot delete file, path =
+//     '...\.dart_tool\lib\libhegel-windows-amd64.dll'
+//     (OS Error: Access is denied, errno = 5)
+//
+// So a nested run fails before reaching the fixture, whatever the fixture
+// says. Skipped rather than quietly excluded, so that the matrix shows the
+// gap; what a Windows user sees is covered by everything else in the suite,
+// which does run there.
+@OnPlatform(<String, Object>{
+  'windows': Skip('a nested `dart test` cannot re-copy the engine DLL'),
+})
 library;
 
 import 'dart:convert';
@@ -38,12 +54,23 @@ String describe(ProcessResult result) =>
     'exit ${result.exitCode}\n--- stdout ---\n${result.stdout}'
     '\n--- stderr ---\n${result.stderr}';
 
+/// Runs [fixture] as a subprocess, with the reporter pinned.
+///
+/// Pinned because package:test picks a reporter from its environment: under
+/// GitHub Actions it switches to one that writes `🎉 1 test passed.` where
+/// the default writes `All tests passed!`, and folds the rest into log
+/// groups. What these tests read is this package's own output, so the chrome
+/// around it should be the same everywhere rather than depending on who is
+/// watching.
 Future<ProcessResult> runFixture(
   List<String> arguments, {
   String fixture = fixturePath,
+  String reporter = 'expanded',
   Map<String, String>? environment,
 }) => Process.run(Platform.resolvedExecutable, <String>[
   'test',
+  '--reporter',
+  reporter,
   fixture,
   ...arguments,
 ], environment: environment);
@@ -79,10 +106,18 @@ void main() {
       isNot(contains('every drawn value is below fifty')),
       reason: '-N selects one property out of the file',
     );
-    // No draws, no engine chatter, no seeds: a property that held has
-    // nothing to report, and reporting it anyway is how a test suite becomes
-    // unreadable.
-    expect(result.stdout, isNot(contains('hegel')));
+    // A property that held has nothing to report, and reporting it anyway is
+    // how a test suite becomes unreadable. Named by what a report is made of
+    // rather than by the package's name, which also appears in a checkout
+    // path and in nothing this asserts about.
+    for (final reported in <String>[
+      'value = ',
+      'reproduce:',
+      'example database',
+      'Seed:',
+    ]) {
+      expect(result.stdout, isNot(contains(reported)));
+    }
     expect(result.stderr, isEmpty);
   });
 
@@ -119,9 +154,7 @@ void main() {
     final result = await runFixture(<String>[
       '-N',
       'below fifty',
-      '--reporter',
-      'json',
-    ]);
+    ], reporter: 'json');
 
     final events = <Map<String, Object?>>[
       for (final String line in const LineSplitter().convert(
