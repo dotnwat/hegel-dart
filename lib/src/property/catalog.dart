@@ -412,28 +412,90 @@ abstract base class _NativeStringGenerator extends Generator<String> {
 
   engine.StringGenerator? _native;
 
-  /// Whether the native generator behind this one has been built.
+  /// Whether this generator has found the native generator behind it.
   ///
-  /// The cache is invisible from outside by design, and both halves of it --
-  /// that nothing is built until a draw asks, and that nothing is built twice
-  /// -- are worth a test.
+  /// Both halves of the cache are worth a test: that nothing is built until a
+  /// draw asks, and that nothing is built twice.
   @visibleForTesting
   bool get isNativeBuilt => _native != null;
+
+  /// Everything this generator asks the engine for, encoded.
+  ///
+  /// Two generators with the same specification want the same native
+  /// generator, whether or not they are the same object.
+  String get specification;
 
   /// Builds the native generator this one draws through.
   engine.StringGenerator buildNative();
 
-  engine.StringGenerator get _nativeGenerator {
-    final built = _native;
-    if (built != null) return built;
-    final made = buildNative();
-    assert(exemptHandle(made));
-    return _native = made;
-  }
+  engine.StringGenerator get _nativeGenerator =>
+      _native ??= _nativeGenerators.putIfAbsent(specification, () {
+        final made = buildNative();
+        assert(exemptHandle(made));
+        return made;
+      });
 
   @override
   String generate(TestCase testCase) =>
       testCase.context.drawString(_nativeGenerator);
+}
+
+/// Every native string generator built so far, by what it was asked for.
+///
+/// Keyed by specification rather than held per generator object, because the
+/// obvious way to write a property puts the generator inside the body:
+///
+/// ```dart
+/// property('a name survives a round trip', (tc) {
+///   final name = tc.draw(text(minLength: 1), name: 'name');
+///   ...
+/// });
+/// ```
+///
+/// That builds a fresh `text(...)` for every test case, and per-object caching
+/// would build -- and never free -- a native generator for every one of them.
+/// A hundred cases, a hundred compiled alphabets. Keyed this way the same
+/// property builds one, and the cost is what it was always meant to be:
+/// bounded by the number of distinct string generators a program describes,
+/// which is a property of the source rather than of how long a run goes on.
+final Map<String, engine.StringGenerator> _nativeGenerators =
+    <String, engine.StringGenerator>{};
+
+/// How many native string generators have been built.
+///
+/// The cache is process-wide and its entries are never released, so what a
+/// test can check is that a run added one of these rather than a hundred.
+@visibleForTesting
+int get nativeStringGeneratorCount => _nativeGenerators.length;
+
+/// [parts] encoded so that no two different lists of parts encode alike.
+///
+/// Every free-form part here can hold any character at all -- a regex, an
+/// alphabet, a Unicode category name -- so the parts are length-prefixed
+/// rather than joined with a separator that one of them may contain. Two
+/// generators sharing a cache entry they should not share would be a
+/// generator quietly drawing from someone else's alphabet, which is the kind
+/// of bug that shows up as a shrink that will not reproduce.
+String _key(List<Object?> parts) {
+  final out = StringBuffer();
+  for (final part in parts) {
+    switch (part) {
+      case null:
+        out.write('~');
+      case final List<String> values:
+        out
+          ..write('[')
+          ..write(_key(values))
+          ..write(']');
+      case _:
+        final text = '$part';
+        out
+          ..write(text.length)
+          ..write(':')
+          ..write(text);
+    }
+  }
+  return out.toString();
 }
 
 /// Generates strings over an alphabet.
@@ -444,6 +506,20 @@ final class TextGenerator extends _NativeStringGenerator {
   TextGenerator._(this._spec);
 
   final _TextSpec _spec;
+
+  @override
+  String get specification => _key(<Object?>[
+    'text',
+    _spec.minLength,
+    _spec.maxLength,
+    _spec.codec,
+    _spec.minCodepoint,
+    _spec.maxCodepoint,
+    _spec.categories,
+    _spec.excludeCategories,
+    _spec.includeCharacters,
+    _spec.excludeCharacters,
+  ]);
 
   @override
   engine.StringGenerator buildNative() => engine.StringGenerator.text(
@@ -514,12 +590,22 @@ TextGenerator text({
     codec: codec,
     minCodepoint: minCodepoint,
     maxCodepoint: maxCodepoint,
-    categories: categories,
-    excludeCategories: excludeCategories,
+    // Taken as they stand, like the list [sampledFrom] is given. A generator
+    // that went on watching the caller's list would answer to a change made
+    // after it was written -- and only until its first draw, after which the
+    // native generator behind it is already built and the change is ignored.
+    // A generator that means two things depending on when it is asked is one
+    // whose counterexamples do not reproduce.
+    categories: _copyOf(categories),
+    excludeCategories: _copyOf(excludeCategories),
     includeCharacters: includeCharacters,
     excludeCharacters: excludeCharacters,
   ));
 }
+
+/// [values] as this library's own list, or null.
+List<String>? _copyOf(List<String>? values) =>
+    values == null ? null : List<String>.of(values);
 
 /// Generates single characters, drawn the way [text] draws them.
 ///
@@ -541,8 +627,8 @@ TextGenerator characters({
   codec: codec,
   minCodepoint: minCodepoint,
   maxCodepoint: maxCodepoint,
-  categories: categories,
-  excludeCategories: excludeCategories,
+  categories: _copyOf(categories),
+  excludeCategories: _copyOf(excludeCategories),
   includeCharacters: includeCharacters,
   excludeCharacters: excludeCharacters,
 ));
@@ -587,6 +673,10 @@ final class _RegexGenerator extends _NativeStringGenerator {
   final TextGenerator? _alphabet;
 
   @override
+  String get specification =>
+      _key(<Object?>['regex', _pattern, _fullMatch, _alphabet?.specification]);
+
+  @override
   engine.StringGenerator buildNative() => engine.StringGenerator.regex(
     _pattern,
     fullMatch: _fullMatch,
@@ -602,14 +692,14 @@ final class _RegexGenerator extends _NativeStringGenerator {
 /// A draw that would exceed the RFC's length cap rejects its own test case,
 /// arriving as the same rejection [TestCase.assume] raises. That is rare
 /// enough to ignore and regular enough not to be a surprise.
-Generator<String> emails() => _NamedStringGenerator(
-  (Libhegel session) => engine.StringGenerator.email(session: session),
-);
+Generator<String> emails() => _NamedStringGenerator(<Object?>[
+  'email',
+], (Libhegel session) => engine.StringGenerator.email(session: session));
 
 /// Generates http and https URLs, per RFC 3986.
-Generator<String> urls() => _NamedStringGenerator(
-  (Libhegel session) => engine.StringGenerator.url(session: session),
-);
+Generator<String> urls() => _NamedStringGenerator(<Object?>[
+  'url',
+], (Libhegel session) => engine.StringGenerator.url(session: session));
 
 /// Generates fully-qualified domain names of at most [maxLength] characters.
 Generator<String> domains({int maxLength = 255}) {
@@ -617,6 +707,7 @@ Generator<String> domains({int maxLength = 255}) {
     throw RangeError.value(maxLength, 'maxLength', 'must not be negative');
   }
   return _NamedStringGenerator(
+    <Object?>['domain', maxLength],
     (Libhegel session) =>
         engine.StringGenerator.domain(maxLength: maxLength, session: session),
   );
@@ -624,9 +715,15 @@ Generator<String> domains({int maxLength = 255}) {
 
 /// One of the engine's ready-made string shapes.
 final class _NamedStringGenerator extends _NativeStringGenerator {
-  _NamedStringGenerator(this._build);
+  _NamedStringGenerator(this._parts, this._build);
+
+  /// What this shape is, and whatever narrows it.
+  final List<Object?> _parts;
 
   final engine.StringGenerator Function(Libhegel session) _build;
+
+  @override
+  String get specification => _key(_parts);
 
   @override
   engine.StringGenerator buildNative() => _build(Libhegel.instance);

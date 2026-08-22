@@ -8,8 +8,10 @@
 /// import 'package:hegel/hegel.dart';
 /// import 'package:hegel/generators.dart' as gen;
 ///
+/// final names = gen.text(minLength: 1);
+///
 /// property('a greeting keeps the name it was given', (tc) {
-///   final name = tc.draw(gen.text(minLength: 1), name: 'name');
+///   final name = tc.draw(names, name: 'name');
 ///   expect(greet(name), contains(name));
 /// });
 /// ```

@@ -490,11 +490,22 @@ Implementation notes carried from §2 and the bindings:
   (empty `sampledFrom`, bad codec strings pass through to the engine's own construction-time
   validation in `StringGenerator`).
 - String-family generators build their native `StringGenerator` lazily on first draw, cache it
-  per generator instance for the process lifetime, and never free it — the TS bounded-leak
+  **by specification** for the process lifetime, and never free it — the TS bounded-leak
   policy, adopted because construction is expensive (regex compilation, Unicode tables) and the
   free rule ("only after every draw using it has completed") has no good deterministic point in
   a value-semantics API. The leak-diagnostics layer gets one exemption hook for these, so the
   assert-mode tracker stays meaningful for everything else.
+
+  *Corrected during commit 11's review.* This said "per generator instance", which is the wrong
+  key and was measured to be: the natural way to write a property puts the generator in the
+  body (`tc.draw(text())`), which is a fresh instance per test case, so a hundred cases built
+  and kept a hundred compiled alphabets — invisibly, since the exemption above is exactly the
+  diagnostic that would have reported them. Keyed by specification the same property builds
+  one, and the cost is what this bullet always claimed: bounded by the number of distinct
+  string generators a program *describes*, a property of the source rather than of how long a
+  run goes on. The keys are length-prefixed rather than delimiter-joined, because every
+  free-form field in a specification — a pattern, an alphabet, a category name — can contain
+  whatever a delimiter would have been.
 - `unique:` uses Dart `==` — unlike TS, which needed a structural `valueKey()` because JS
   `Set` identity is wrong for its values; Dart's story is the language's own, documented (a
   list of lists won't dedupe structurally unless the element type implements `==`).

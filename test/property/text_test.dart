@@ -303,40 +303,148 @@ void main() {
   });
 
   group('the native generator behind a string generator', () {
+    /// How many natives [body] caused to be built.
+    ///
+    /// The cache is process-wide and outlives any one test, so what a test
+    /// can say is how much it added to it.
+    int nativesBuiltBy(void Function() body) {
+      final before = nativeStringGeneratorCount;
+      body();
+      return nativeStringGeneratorCount - before;
+    }
+
     test('is not built until a draw asks for it', () {
       expect(text().isNativeBuilt, isFalse);
+      expect(nativesBuiltBy(() => text(maxLength: 41)), 0);
     });
 
-    test('is built once, and reused by every later draw and run', () {
+    test('is built once for a generator drawn from twice', () {
       final session = openSession();
-      final generator = text(maxLength: 4);
+      final generator = text(maxLength: 42);
 
-      drawEveryCase(session, generator, testCases: 10);
+      expect(
+        nativesBuiltBy(() {
+          drawEveryCase(session, generator, testCases: 10);
+          drawEveryCase(session, generator, testCases: 10);
+        }),
+        1,
+      );
       expect(generator.isNativeBuilt, isTrue);
+    });
 
-      // Two whole runs and one native generator: building costs a regex
-      // compile and a Unicode table walk, which is the reason it is kept.
-      final first = generator.buildNative;
-      drawEveryCase(session, generator, testCases: 10);
-      expect(generator.buildNative, first);
+    test('is built once for a generator written inside the body', () {
+      // The shape a property is actually written in, and the one that made
+      // per-object caching the wrong idea: a fresh generator per test case,
+      // each of which would otherwise compile its own alphabet and keep it
+      // forever.
+      final session = openSession();
+
+      expect(
+        nativesBuiltBy(() {
+          driveCases(session, (TestCase testCase) {
+            testCase.draw(text(maxLength: 43));
+          }, testCases: 25);
+        }),
+        1,
+      );
     });
 
     test('is shared by every pattern built over the same alphabet', () {
       final session = openSession();
-      final alphabet = text(minCodepoint: 120, maxCodepoint: 122);
-
-      drawEveryCase(
-        session,
-        fromRegex('a', fullMatch: false, alphabet: alphabet),
-        testCases: 5,
-      );
-      drawEveryCase(
-        session,
-        fromRegex('b', fullMatch: false, alphabet: alphabet),
-        testCases: 5,
+      // A specification no other test uses, since the cache outlives them
+      // all and a warm entry would make this measure nothing.
+      final alphabet = text(
+        minCodepoint: 120,
+        maxCodepoint: 122,
+        maxLength: 47,
       );
 
+      expect(
+        nativesBuiltBy(() {
+          drawEveryCase(
+            session,
+            fromRegex('a', fullMatch: false, alphabet: alphabet),
+            testCases: 5,
+          );
+          drawEveryCase(
+            session,
+            fromRegex('b', fullMatch: false, alphabet: alphabet),
+            testCases: 5,
+          );
+          // Two patterns and the alphabet under them: three specifications,
+          // and the alphabet is the one they share.
+        }),
+        3,
+      );
       expect(alphabet.isNativeBuilt, isTrue);
+    });
+
+    test('is not shared by generators that differ anywhere', () {
+      final session = openSession();
+
+      // Pairs a careless key would collide: a field's content against the
+      // next field's, an empty string against a missing one, the same
+      // category list under two different names.
+      expect(
+        nativesBuiltBy(() {
+          for (final generator in <Generator<String>>[
+            text(maxLength: 44, includeCharacters: 'ab'),
+            text(maxLength: 44, includeCharacters: 'a', excludeCharacters: 'b'),
+            text(maxLength: 44, excludeCharacters: ''),
+            text(maxLength: 44),
+            text(maxLength: 44, categories: <String>['Lu']),
+            text(maxLength: 44, excludeCategories: <String>['Lu']),
+            text(maxLength: 44, codec: 'ascii'),
+          ]) {
+            drawEveryCase(session, generator, testCases: 2);
+          }
+        }),
+        7,
+      );
+    });
+
+    test('tells two ready-made shapes apart, and two of one shape', () {
+      final session = openSession();
+
+      // Measured as increments that must be zero, plus parameters no other
+      // test uses: emails() and urls() take no arguments, so whether they
+      // are already cached depends on what ran first.
+      drawEveryCase(session, emails(), testCases: 2);
+      expect(
+        nativesBuiltBy(() => drawEveryCase(session, emails(), testCases: 2)),
+        0,
+      );
+      expect(
+        nativesBuiltBy(
+          () => drawEveryCase(session, domains(maxLength: 45), testCases: 2),
+        ),
+        1,
+      );
+      expect(
+        nativesBuiltBy(
+          () => drawEveryCase(session, domains(maxLength: 46), testCases: 2),
+        ),
+        1,
+      );
+    });
+
+    test('does not go on watching the list it was given', () {
+      final categories = <String>['Nd'];
+      final generator = text(
+        categories: categories,
+        codec: 'ascii',
+        maxLength: 6,
+      );
+      categories.add('Lu');
+
+      final values = drawEveryCase(openSession(), generator);
+
+      expect(values, isNotEmpty);
+      expect(
+        values,
+        everyElement(isNot(matches(RegExp('[A-Z]')))),
+        reason: 'the letters were added after the generator was written',
+      );
     });
 
     test('passes a draw that rejects its own case straight through', () {
