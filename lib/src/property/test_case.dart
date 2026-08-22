@@ -89,14 +89,19 @@ abstract interface class DrawMachine {
   /// The value identifies the round's concurrency group.
   int? nextGroup();
 
-  /// The index of the next rule to run, or null once the round is over.
-  int? nextRule();
-
-  /// Reports the rule most recently handed out as one that could not run.
+  /// The index of the next rule for [worker], or null once its round is over.
   ///
-  /// A rejected rule does not count against the step budget, so the case gets
-  /// the slot back rather than spending it on something it could not do.
-  void ruleRejected();
+  /// Drawn from [from], the handle that worker was given: one handle may only
+  /// be driven by one worker at a time, so above concurrency one each asks
+  /// through its own clone.
+  int? nextRule(DrawContext from, int worker);
+
+  /// Reports the rule most recently handed to [worker] as one that could not
+  /// run.
+  ///
+  /// A rejected rule does not count against the step budget, so the worker
+  /// gets the slot back rather than spending it on something it could not do.
+  void ruleRejected(DrawContext from, int worker);
 
   /// Releases the machine. Idempotent.
   void dispose();
@@ -178,6 +183,15 @@ abstract interface class DrawContext {
   /// body raised has not and means only that this step was a bad idea.
   bool get isAborted;
 
+  /// A second handle onto this case, for a worker to draw from.
+  ///
+  /// Each clone is an independent choice stream over the same case, which is
+  /// what lets workers run at once: a single handle may only be driven by one
+  /// of them at a time. The caller gives the handle back with the `release`
+  /// that comes with it, which is how one is released without every context
+  /// in the seam having to be disposable.
+  ({DrawContext context, void Function() release}) cloneForWorker();
+
   /// Starts a set of variable identifiers the engine can choose among.
   DrawPool startPool();
 
@@ -185,9 +199,17 @@ abstract interface class DrawContext {
   ///
   /// [invariantNames] is registration only: the engine validates them and
   /// keeps nothing, since running invariants is the driver's job.
+  ///
+  /// `ruleGroups` assigns each rule to a concurrency group: rules in one
+  /// group may overlap, rules in different groups never do. The engine draws
+  /// the number of workers somewhere in the range it is given, and exactly
+  /// that many must run.
   DrawMachine startStateMachine({
     required List<String> ruleNames,
+    required List<int> ruleGroups,
     required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
   });
 
   /// Starts a sequence of [minLength] to [maxLength] elements.
@@ -286,14 +308,26 @@ final class EngineDrawContext implements DrawContext {
   DrawPool startPool() => _EnginePool(testCase.newPool());
 
   @override
+  ({DrawContext context, void Function() release}) cloneForWorker() {
+    final clone = testCase.clone();
+    return (context: EngineDrawContext(clone), release: clone.dispose);
+  }
+
+  @override
   DrawMachine startStateMachine({
     required List<String> ruleNames,
+    required List<int> ruleGroups,
     required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
   }) => _EngineMachine(
     testCase,
     testCase.newStateMachine(
       ruleNames: ruleNames,
+      ruleGroups: ruleGroups,
       invariantNames: invariantNames,
+      minConcurrency: minConcurrency,
+      maxConcurrency: maxConcurrency,
     ),
   );
 
@@ -368,28 +402,34 @@ final class _EnginePool implements DrawPool {
 
 /// A [DrawMachine] backed by a real engine state machine.
 ///
-/// One worker, which is what a sequential run is: the root handle drives the
-/// rounds and pulls the rules, and worker zero is the only worker there is.
+/// Rounds are begun on the root case, the one handle every worker shares;
+/// rules are pulled through whichever handle the worker was given.
 final class _EngineMachine implements DrawMachine {
-  _EngineMachine(this._testCase, this._machine);
+  _EngineMachine(this._root, this._machine);
 
-  final engine.TestCase _testCase;
+  final engine.TestCase _root;
   final engine.StateMachine _machine;
 
   @override
   int get concurrency => _machine.concurrency;
 
   @override
-  int? nextGroup() => _machine.nextGroup(_testCase);
+  int? nextGroup() => _machine.nextGroup(_root);
 
   @override
-  int? nextRule() => _machine.nextRule(_testCase, 0);
+  int? nextRule(DrawContext from, int worker) =>
+      _machine.nextRule(_caseOf(from), worker);
 
   @override
-  void ruleRejected() => _machine.ruleRejected(_testCase, 0);
+  void ruleRejected(DrawContext from, int worker) =>
+      _machine.ruleRejected(_caseOf(from), worker);
 
   @override
   void dispose() => _machine.dispose();
+
+  /// The engine case behind [from]; see [_EnginePool._caseOf].
+  engine.TestCase _caseOf(DrawContext from) =>
+      (from as EngineDrawContext).testCase;
 }
 
 /// One test case, as a property body sees it.
@@ -601,6 +641,24 @@ final class TestCase {
   @internal
   void undoNote() {
     if (_notes.isNotEmpty) _notes.removeLast();
+  }
+
+  /// Takes what [worker] drew and noted into this case, tagged with [tag].
+  ///
+  /// A worker keeps its own log while a round is running, because two of them
+  /// writing into one list interleave into something no one can read. At the
+  /// join point the round is over and the order is settled, so the lines come
+  /// across in worker order with a tag saying whose they were -- which is the
+  /// only honest account of a run whose whole point is that the order was not
+  /// fixed.
+  @internal
+  void absorb(TestCase worker, String tag) {
+    for (final String note in worker._notes) {
+      _notes.add('$tag $note');
+    }
+    _draws.addAll(worker._draws);
+    worker._notes.clear();
+    worker._draws.clear();
   }
 
   /// Records [message] for the failure report.

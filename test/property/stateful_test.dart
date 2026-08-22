@@ -36,9 +36,15 @@ final class _ScriptedMachine extends FakeDrawContext implements DrawMachine {
   @override
   DrawMachine startStateMachine({
     required List<String> ruleNames,
+    required List<int> ruleGroups,
     required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
   }) {
-    calls.add('machine ${ruleNames.join(',')} / ${invariantNames.join(',')}');
+    calls.add(
+      'machine ${ruleNames.join(',')} in ${ruleGroups.join(',')} / '
+      '${invariantNames.join(',')} over $minConcurrency..$maxConcurrency',
+    );
     return this;
   }
 
@@ -53,7 +59,7 @@ final class _ScriptedMachine extends FakeDrawContext implements DrawMachine {
   }
 
   @override
-  int? nextRule() {
+  int? nextRule(DrawContext from, int worker) {
     final round = rounds[_round];
     return _within < round.length ? round[_within++] : null;
   }
@@ -61,7 +67,74 @@ final class _ScriptedMachine extends FakeDrawContext implements DrawMachine {
   // The engine would hand the slot back and choose again; the script just
   // goes on to whatever it says comes next, which is what keeps it finite.
   @override
-  void ruleRejected() => calls.add('rejected');
+  void ruleRejected(DrawContext from, int worker) => calls.add('rejected');
+
+  @override
+  void dispose() => calls.add('machine freed');
+}
+
+/// A scripted machine that hands out a round to several workers at once.
+///
+/// Which worker gets which rule, and which of two simultaneous endings the
+/// engine sees first, are the things a real run will not repeat on request --
+/// and they are exactly what the rules below the join point turn on.
+final class _ConcurrentMachine extends FakeDrawContext implements DrawMachine {
+  _ConcurrentMachine(this.perWorker);
+
+  /// The rules to hand each worker, in the one round there is.
+  final List<List<int>> perWorker;
+
+  @override
+  int get concurrency => perWorker.length;
+
+  /// Whether the engine has ended the case out from under the workers.
+  bool aborted = false;
+
+  @override
+  bool get isAborted => aborted;
+
+  final List<int> _within = <int>[];
+  bool _roundTaken = false;
+
+  // Every worker draws through the same fake, which has no engine behind it
+  // and so nothing to keep apart. What does have to be kept apart is each
+  // worker's log, and the driver gives every worker a case of its own for
+  // that.
+  @override
+  ({DrawContext context, void Function() release}) cloneForWorker() =>
+      (context: this, release: () => calls.add('worker released'));
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  }) {
+    _within.addAll(List<int>.filled(perWorker.length, 0));
+    return this;
+  }
+
+  @override
+  int? nextGroup() {
+    if (_roundTaken) return null;
+    _roundTaken = true;
+    return 0;
+  }
+
+  @override
+  int? nextRule(DrawContext from, int worker) {
+    final round = perWorker[worker];
+    final at = _within[worker];
+    if (at >= round.length) return null;
+    _within[worker] = at + 1;
+    return round[at];
+  }
+
+  @override
+  void ruleRejected(DrawContext from, int worker) =>
+      calls.add('rejected $worker');
 
   @override
   void dispose() => calls.add('machine freed');
@@ -129,7 +202,7 @@ void main() {
         ),
       );
 
-      expect(context.calls.first, 'machine push,pop / sorted');
+      expect(context.calls.first, 'machine push,pop in 0,0 / sorted over 1..1');
       expect(context.calls.last, 'machine freed');
     });
 
@@ -144,7 +217,7 @@ void main() {
       );
 
       expect(context.calls, <String>[
-        'machine push / ',
+        'machine push in 0 /  over 1..1',
         'start ${SpanLabel.statefulRule.value}',
         'stop',
         'machine freed',
@@ -202,7 +275,7 @@ void main() {
       // Turned down before anything was drawn, so there is no span either:
       // the point of this form is that it costs nothing.
       expect(context.calls, <String>[
-        'machine pop / ',
+        'machine pop in 0 /  over 1..1',
         'rejected',
         'machine freed',
       ]);
@@ -362,6 +435,183 @@ void main() {
       }, settings: pinSettings(testCases: 20));
 
       expect(steps, greaterThan(0));
+    });
+  });
+
+  group('a round run by several workers', () {
+    test('tags every step with the worker that took it', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('push', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+          }),
+          Rule('pop', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+          }),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      // In worker order rather than in the order they finished, because the
+      // order they finished in is the thing that will not be the same twice.
+      expect(testCase.notes, <String>[
+        '[worker 0] Step 1: push',
+        '[worker 1] Step 2: pop',
+      ]);
+    });
+
+    test('reports the ending that says the case did not finish', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+
+      // Worker 0 says the property is wrong; worker 1 says the engine stopped
+      // handing out choices. The second outranks the first, because a
+      // conclusion drawn from a case that never ran to the end is not a
+      // conclusion.
+      await expectLater(
+        runStateful(
+          TestCase(context),
+          _Machine(<Rule>[
+            Rule('fails', (TestCase tc) async => throw StateError('wrong')),
+            Rule('overruns', (TestCase tc) async => throw const StopTest()),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(isA<StopTest>()),
+      );
+    });
+
+    test(
+      'prefers an overrun to an assumption, and both to a failure',
+      () async {
+        for (final (List<Rule> rules, Matcher wins) in <(List<Rule>, Matcher)>[
+          (
+            <Rule>[
+              Rule('assumes', (TestCase tc) async => tc.assume(false)),
+              Rule('overruns', (TestCase tc) async => throw const StopTest()),
+            ],
+            isA<StopTest>(),
+          ),
+          (
+            <Rule>[
+              Rule('fails', (TestCase tc) async => throw StateError('wrong')),
+              Rule('assumes', (TestCase tc) async => tc.assume(false)),
+            ],
+            isA<AssumptionFailed>(),
+          ),
+        ]) {
+          final context = _ConcurrentMachine(<List<int>>[
+            <int>[0],
+            <int>[1],
+          ])..aborted = true;
+
+          await expectLater(
+            runStateful(
+              TestCase(context),
+              _Machine(rules),
+              minConcurrency: 2,
+              maxConcurrency: 2,
+            ),
+            throwsA(wins),
+          );
+        }
+      },
+    );
+
+    test('reports the lowest worker when two end the same way', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+
+      // Arbitrary, and therefore fixed: whichever of two racing workers is
+      // reported cannot depend on which happened to finish first, or the
+      // report would not be the same twice.
+      await expectLater(
+        runStateful(
+          TestCase(context),
+          _Machine(<Rule>[
+            Rule('first', (TestCase tc) async => throw StateError('from 0')),
+            Rule('second', (TestCase tc) async => throw StateError('from 1')),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            'from 0',
+          ),
+        ),
+      );
+    });
+
+    test('says so when a second worker also ended badly', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await expectLater(
+        runStateful(
+          testCase,
+          _Machine(<Rule>[
+            Rule('first', (TestCase tc) async => throw StateError('from 0')),
+            Rule('second', (TestCase tc) async => throw StateError('from 1')),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      // One error is raised and the other would otherwise vanish, which would
+      // read as though the rest of the round was fine.
+      expect(
+        testCase.notes,
+        contains(contains('Worker 1 also ended with Bad state: from 1')),
+      );
+    });
+
+    test('keeps the steps of a round that ended badly', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await expectLater(
+        runStateful(
+          testCase,
+          _Machine(<Rule>[
+            Rule('worked', (TestCase tc) async {
+              await Future<void>.delayed(Duration.zero);
+            }),
+            Rule('failed', (TestCase tc) async => throw StateError('wrong')),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      // The round that ends badly is the one whose script the reader most
+      // needs, so a worker's log is taken across however the round ended.
+      expect(testCase.notes, contains('[worker 0] Step 1: worked'));
+      expect(testCase.notes, contains('[worker 1] Step 2: failed'));
     });
   });
 

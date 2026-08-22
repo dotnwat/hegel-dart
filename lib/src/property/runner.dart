@@ -310,6 +310,12 @@ Future<Never> _report(
           settings,
           diagnostic,
           stored: false,
+          unstored: result.status == RunStatus.failedNondeterministic
+              ? 'This run did not promise to repeat itself, so no '
+                    'counterexample was kept. What is above is the case that '
+                    'found the failure.'
+              : 'This run produced a single test case, so there was nothing '
+                    'to shrink and no counterexample was kept.',
           heading: _heading(
             index: index,
             count: count,
@@ -436,6 +442,7 @@ void _describe(
   String? blob,
   bool? printBlob,
   bool stored = true,
+  String? unstored,
   String? heading,
 }) => diagnostic(
   renderFailure(
@@ -446,6 +453,7 @@ void _describe(
       blob: blob,
       printBlob: printBlob,
       stored: stored,
+      unstored: unstored,
     ),
     heading: heading,
   ),
