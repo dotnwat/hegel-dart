@@ -3,20 +3,81 @@
 Property-based testing for Dart, powered by the [Hegel](https://hegel.dev)
 engine.
 
-> **Status: the bindings, not the API.** This package currently contains the
-> FFI bindings to libhegel — the engine that does generation, shrinking, and
-> replay. The property-testing API those bindings exist to support has not been
-> written yet, so there is nothing here a test author would want to use
-> directly. See `docs/libhegel-bindings-plan.md` for the plan and where this
-> sits in it.
+> **Status: early.** The runner, the failure reporting and the example
+> database work end to end, but the generator catalog is one entry long —
+> `integers()`. Combinators, collections, strings and stateful testing are
+> next; `docs/property-testing-plan.md` is the plan and says what lands when.
 
-## What works today
+## Writing a property
 
-The engine is fully reachable from Dart: configure a run, pull test cases, draw
-values, report outcomes, read results, shrink failures, and replay them from a
-reproduce blob. Every function the C ABI exposes is bound and exercised.
+A property is a claim about every input. Write one with `property()`, which
+registers an ordinary `package:test` test, and draw the inputs from the
+`TestCase` it hands you:
 
-`example/echo.dart` drives a complete run through the bindings:
+```dart
+import 'package:hegel/hegel.dart';
+import 'package:test/test.dart';
+
+void main() {
+  property('a sum is at least its largest part', (tc) {
+    final a = tc.draw(integers(min: 0, max: 1000), name: 'a');
+    final b = tc.draw(integers(min: -10, max: 1000), name: 'b');
+    expect(a + b, greaterThanOrEqualTo(a));
+  });
+}
+```
+
+The body may be synchronous or asynchronous, may draw as many values as it
+likes, and fails the way any test fails. Everything `dart test` does with
+tests it does with this one: `group()` nesting, `-N` by name, tags, skips, the
+IDE's run button.
+
+That property does not hold, and when it fails the engine shrinks the failing
+case to the smallest one that still fails before anything is printed:
+
+```console
+$ dart test
+00:00 +0 -1: a sum is at least its largest part [E]
+  Expected: a value greater than or equal to <0>
+    Actual: <-1>
+     Which: is not a value greater than or equal to <0>
+
+  package:matcher                 expect
+  test/sum_test.dart 11:5         main.<fn>
+  ...
+
+a = 0
+b = -1
+
+Kept in the example database and replayed first next time, unless the engine turned persistence off (it does under CI).
+To reproduce anywhere: property(..., reproduce: 'AXicY2IAAi5GBjj1HwACBAEY')
+```
+
+The error is the one your own `expect` raised, with its own stack. The named
+draws below it are the minimal counterexample. It is kept in `.hegel/examples`
+and replayed ahead of anything new next time, so the property keeps failing
+until the bug is fixed — and the blob reproduces it anywhere, which is how a
+failure from CI comes back to a machine with a debugger:
+
+```dart
+property('a sum is at least its largest part', (tc) {
+  // ...
+}, reproduce: 'AXicY2IAAi5GBjj1HwACBAEY');
+```
+
+`runProperty()` is the same runner without `package:test`, for harnesses that
+are not it. `HEGEL_TEST_CASES` and `HEGEL_DATABASE` override how many cases a
+run gets and where counterexamples are kept, without editing the source.
+
+## Under it: the engine
+
+The engine is fully reachable from Dart on its own: configure a run, pull test
+cases, draw values, report outcomes, read results, shrink failures, and replay
+them from a reproduce blob. Every function the C ABI exposes is bound and
+exercised. That layer is private (`lib/src/libhegel/`) and documented in
+`docs/libhegel-bindings-plan.md`.
+
+`example/echo.dart` drives a complete run through it:
 
 ```console
 $ dart run example/echo.dart

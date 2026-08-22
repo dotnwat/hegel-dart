@@ -16,5 +16,8 @@ Unreleased. The libhegel FFI bindings, built from the bottom up.
   ownership in the coordinator.
 - Engine output delivered to Dart through a callback.
 
-No public API yet: everything lives under `lib/src/`, and the barrel
-`lib/hegel.dart` is deliberately empty until the property-testing layer exists.
+The first slice of the public API on top of them: `property()` and
+`runProperty()`, a `TestCase` to draw from, the `integers()` generator, named
+draws and the failure report, settings and their environment overrides, and
+`reproduce:` for replaying a counterexample from a blob. The generator catalog
+is deliberately one entry long so far; see `docs/property-testing-plan.md`.
