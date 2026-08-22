@@ -58,6 +58,25 @@ void main() {
     });
   });
 
+  group('a property run outside a test', () {
+    test(
+      'works, with its diagnostics going where the engine\'s would',
+      () async {
+        // The root zone has no invoker, which is what a script, a soak runner
+        // or a `dart run` looks like. The runner is meant to work there --
+        // that is the whole reason it is separate from property() -- and its
+        // diagnostics fall back to stderr because there is no test to attach
+        // them to.
+        await Zone.root.run(
+          () => runProperty(
+            (TestCase testCase) => testCase.draw(integers(min: 0, max: 10)),
+            settings: runSettings(testCases: 5),
+          ),
+        );
+      },
+    );
+  });
+
   group('a property that fails', () {
     test('throws the body its own error, from the shrunk case', () async {
       await expectLater(

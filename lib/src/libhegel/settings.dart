@@ -266,6 +266,33 @@ final class Settings {
   /// How much the engine says while it runs.
   final Verbosity? verbosity;
 
+  /// This configuration with [key] as its [databaseKey], or unchanged if it
+  /// already has one.
+  ///
+  /// The layer above derives a key from the test's own identity rather than
+  /// asking for one, since a database with no key stores and replays nothing.
+  /// A key the caller chose wins: sharing one between properties is a
+  /// deliberate thing to do.
+  ///
+  /// Here rather than above because it copies every field: a setting added to
+  /// the list above and forgotten here would be silently dropped.
+  Settings withDatabaseKey(String key) => databaseKey != null
+      ? this
+      : Settings(
+          testCases: testCases,
+          statefulStepCount: statefulStepCount,
+          mode: mode,
+          backend: backend,
+          seed: seed,
+          derandomize: derandomize,
+          database: database,
+          databaseKey: key,
+          phases: phases,
+          suppressHealthChecks: suppressHealthChecks,
+          reportMultipleFailures: reportMultipleFailures,
+          verbosity: verbosity,
+        );
+
   /// Builds an engine-side settings handle, applies this configuration, and
   /// hands it to [use]. The handle is freed before returning.
   ///

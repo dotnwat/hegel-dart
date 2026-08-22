@@ -6,6 +6,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:meta/meta.dart';
+import 'package:test_api/hooks.dart';
+import 'package:test_api/scaffolding.dart';
 
 import '../libhegel/errors.dart';
 import '../libhegel/run.dart';
@@ -45,8 +47,9 @@ final class PropertyError implements Exception {
 ///
 /// [settings] configures the run; whatever it leaves out, the engine decides.
 /// [onDiagnostic] receives the engine's output and anything the runner has to
-/// say that is not a failure, one line at a time; it writes to stderr when
-/// left out, which is the engine's own default behaviour.
+/// say that is not a failure, one line at a time. Left out, it goes to
+/// package:test's on-failure buffer when there is a test to attach it to, and
+/// to stderr when there is not.
 ///
 /// This is the whole runner. `property()` adds package:test to it and nothing
 /// else, which is what keeps the two honest: a harness that is not
@@ -56,7 +59,7 @@ Future<void> runProperty(
   Settings settings = const Settings(),
   void Function(String line)? onDiagnostic,
 }) async {
-  final diagnostic = onDiagnostic ?? _writeToStderr;
+  final diagnostic = onDiagnostic ?? _defaultDiagnostic();
   final session = Libhegel.instance;
   final run = Run.start(settings, session: session, onOutput: diagnostic);
   // The case that first failed, kept for the runs that store no
@@ -284,4 +287,18 @@ Never raiseReplayed({
   }
 }
 
-void _writeToStderr(String line) => stderr.writeln(line);
+/// Where diagnostics go when the caller does not say.
+///
+/// Inside a test, package:test's own on-failure buffer: lines are kept and
+/// shown if the test fails and dropped if it passes, which is what makes a
+/// property that holds silent without the runner having to decide what was
+/// interesting. Outside one -- a script, a soak run, a `dart run` -- there is
+/// nothing to buffer against, so they go where the engine's own output would.
+void Function(String line) _defaultDiagnostic() {
+  try {
+    TestHandle.current;
+  } on OutsideTestException {
+    return stderr.writeln;
+  }
+  return printOnFailure;
+}
