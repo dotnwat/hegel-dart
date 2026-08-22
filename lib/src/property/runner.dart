@@ -73,13 +73,16 @@ Future<void> runProperty(
   bool? printBlob,
   void Function(String line)? onDiagnostic,
 }) async {
-  final diagnostic = onDiagnostic ?? _defaultDiagnostic();
   final session = Libhegel.instance;
   final resolved = resolveSettings(
     settings,
     environment: Platform.environment,
     databaseKey: databaseKey,
   );
+  // After resolution, because where the default sink sends a line depends on
+  // how much the run was asked to say -- and the environment gets to change
+  // that as much as the settings do.
+  final diagnostic = onDiagnostic ?? defaultDiagnostic(resolved);
   if (reproduce != null) {
     return _reproduce(reproduce, body, resolved, session, diagnostic);
   }
@@ -533,11 +536,25 @@ Never raiseReplayed({
 /// property that holds silent without the runner having to decide what was
 /// interesting. Outside one -- a script, a soak run, a `dart run` -- there is
 /// nothing to buffer against, so they go where the engine's own output would.
-void Function(String line) _defaultDiagnostic() {
+///
+/// Verbosity changes the answer. Someone who asked the engine for per-case
+/// progress asked to watch a run happen, and a buffer shown only if the run
+/// fails is the opposite of that: the run they were most likely watching is
+/// the one that holds, and it would print nothing at all. So from
+/// [Verbosity.verbose] up the lines go out as they arrive. The failure block
+/// goes the same way, since it is the same sink; a verbose run is one where
+/// being noisy is the point.
+@visibleForTesting
+void Function(String line) defaultDiagnostic(Settings settings) {
   try {
     TestHandle.current;
   } on OutsideTestException {
     return stderr.writeln;
   }
-  return printOnFailure;
+  return switch (settings.verbosity) {
+    // Null is the engine deciding, and it decides on a summary line per run,
+    // which is not somebody watching.
+    Verbosity.verbose || Verbosity.debug => print,
+    _ => printOnFailure,
+  };
 }

@@ -196,6 +196,17 @@ void main() {
     });
   });
 
+  test('a verbose property narrates a run that held', () async {
+    final result = await runFixture(<String>['-N', 'narrates']);
+
+    expect(result.exitCode, 0, reason: describe(result));
+    // The engine's own per-case output, on a test that passed. Buffered
+    // until failure -- which is what every other property here does -- none
+    // of this would be printed at all.
+    expect(result.stdout, contains('Starting phase: Generate'));
+    expect(result.stdout, contains('Running test case'));
+  });
+
   test('the reporter points at the line the property was written on', () async {
     final result = await runFixture(<String>[
       '-N',

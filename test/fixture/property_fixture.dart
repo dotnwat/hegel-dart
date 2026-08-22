@@ -18,6 +18,18 @@ const Settings fixtureSettings = Settings(
   verbosity: Verbosity.quiet,
 );
 
+/// The same run, asked to narrate.
+///
+/// Fewer cases because every one of them prints a line, and this exists to
+/// show that the lines arrive rather than to produce a lot of them.
+const Settings verboseSettings = Settings(
+  testCases: 5,
+  seed: 1,
+  derandomize: true,
+  database: Database.disabled,
+  verbosity: Verbosity.verbose,
+);
+
 void main() {
   property('every drawn value is an integer', (TestCase tc) {
     expect(tc.draw(integers(min: 0, max: 100)), isA<int>());
@@ -42,4 +54,12 @@ void main() {
       expect(value, lessThan(200), reason: 'an odd value went large');
     }
   }, settings: fixtureSettings);
+
+  // Verbose and passing, which is the combination that has somewhere to go
+  // wrong: the engine's per-case output is meant to be watched while a run
+  // happens, and a sink that buffered until failure would throw all of it
+  // away on exactly the run somebody was watching.
+  property('a verbose property narrates its own run', (TestCase tc) {
+    tc.draw(integers(min: 0, max: 100), name: 'value');
+  }, settings: verboseSettings);
 }

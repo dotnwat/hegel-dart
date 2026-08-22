@@ -25,13 +25,14 @@ Settings runSettings({
   int seed = 5,
   Mode? mode,
   Set<HealthCheck>? suppress,
+  Verbosity? verbosity = Verbosity.quiet,
 }) => Settings(
   testCases: testCases,
   mode: mode,
   seed: seed,
   derandomize: true,
   database: Database.disabled,
-  verbosity: Verbosity.quiet,
+  verbosity: verbosity,
   suppressHealthChecks: suppress ?? machineSpeedChecks,
 );
 
@@ -334,6 +335,93 @@ void main() {
           'Bad state: the real one',
         ),
       );
+    });
+  });
+
+  group('a run the engine could not use', () {
+    test(
+      'reaches the caller as an error, in the engine\'s own words',
+      () async {
+        // A body that assumes something no case satisfies, which is a mistake
+        // people make: the engine notices that almost nothing survives and
+        // ends the run rather than reporting a verdict it does not have.
+        await expectLater(
+          runProperty((TestCase testCase) {
+            testCase.draw(integers(min: 0, max: 1000));
+            testCase.assume(false);
+          }, settings: runSettings()),
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              allOf(
+                contains('FilterTooMuch'),
+                contains('filtering out too many inputs'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('is an error rather than a failure, and says nothing else', () async {
+      // The distinction the type carries: package:test renders anything that
+      // is not a TestFailure as an error, which is the severity that fits a
+      // run with no verdict in it. A report block would be worse than
+      // useless here -- there is no counterexample to print.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            testCase.draw(integers(min: 0, max: 1000));
+            testCase.assume(false);
+          },
+          settings: runSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsA(isNot(isA<TestFailure>())),
+      );
+      expect(said.where((String line) => line.contains('draw_')), isEmpty);
+    });
+
+    test('says so even when the engine gave no reason', () {
+      // Not reachable through a run: the engine names every error it
+      // reports. Checked on the text alone so that a run which somehow
+      // reported nothing still says something.
+      expect(
+        PropertyError('the run ended without saying why').message,
+        contains('without saying why'),
+      );
+    });
+  });
+
+  group('the default diagnostic sink', () {
+    test('buffers until failure at the verbosity a run usually has', () {
+      for (final Verbosity? verbosity in <Verbosity?>[
+        null,
+        Verbosity.quiet,
+        Verbosity.normal,
+      ]) {
+        expect(
+          defaultDiagnostic(runSettings(verbosity: verbosity)),
+          same(printOnFailure),
+          reason: 'a property that holds is meant to be silent',
+        );
+      }
+    });
+
+    test('prints as it goes once the run was asked to narrate', () {
+      for (final Verbosity verbosity in <Verbosity>[
+        Verbosity.verbose,
+        Verbosity.debug,
+      ]) {
+        expect(
+          defaultDiagnostic(runSettings(verbosity: verbosity)),
+          same(print),
+          reason: 'watching a run happen is the whole point of asking',
+        );
+      }
     });
   });
 
