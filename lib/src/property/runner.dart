@@ -79,9 +79,12 @@ Future<void> runProperty(
     environment: Platform.environment,
     databaseKey: databaseKey,
   );
-  // After resolution, because where the default sink sends a line depends on
-  // how much the run was asked to say -- and the environment gets to change
-  // that as much as the settings do.
+  // Built from the resolved settings rather than from what the caller wrote,
+  // because where the default sink sends a line depends on how much the run
+  // was asked to say. Nothing resolution does today touches verbosity -- the
+  // environment gets a say over the case count and the database and no more
+  // -- so the two answers are currently the same. Asking the settings the run
+  // will actually use is the question that stays right if that changes.
   final diagnostic = onDiagnostic ?? defaultDiagnostic(resolved);
   if (reproduce != null) {
     return _reproduce(reproduce, body, resolved, session, diagnostic);
