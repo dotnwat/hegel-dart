@@ -134,27 +134,49 @@ void main() {
       expect(resolved.database, Database.disabled);
     });
 
+    test('leave the database alone when there is no key to scope it', () {
+      // A keyless database stores and replays nothing, and the binding layer
+      // refuses the combination outright -- so applying the variable here
+      // would turn an ambient setting into a failed run rather than into
+      // kept counterexamples.
+      final resolved = resolveSettings(
+        const Settings(testCases: 5),
+        environment: <String, String>{databaseVariable: '/tmp/examples'},
+      );
+
+      expect(resolved.database, isNull);
+      expect(resolved.testCases, 5, reason: 'the other override still lands');
+    });
+
     test('refuse a case count that is not one', () {
-      expect(
-        () => resolveSettings(
-          written,
-          environment: <String, String>{testCasesVariable: 'lots'},
-        ),
-        throwsA(
-          isA<PropertyError>().having(
-            (PropertyError error) => error.message,
-            'message',
-            allOf(contains(testCasesVariable), contains('"lots"')),
+      for (final value in <String>[
+        'lots',
+        '',
+        // Zero is the dangerous one: a run with no cases checks nothing and
+        // reports that the property held, so a leftover variable on a CI job
+        // would turn a whole suite green.
+        '0',
+        '-1',
+        // int.tryParse would take these as sixteen and five.
+        '0x10',
+        '+5',
+        ' 5 ',
+      ]) {
+        expect(
+          () => resolveSettings(
+            written,
+            environment: <String, String>{testCasesVariable: value},
           ),
-        ),
-      );
-      expect(
-        () => resolveSettings(
-          written,
-          environment: <String, String>{testCasesVariable: '-1'},
-        ),
-        throwsA(isA<PropertyError>()),
-      );
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              allOf(contains(testCasesVariable), contains('"$value"')),
+            ),
+          ),
+          reason: 'a variable set to "$value" was set on purpose',
+        );
+      }
     });
   });
 }

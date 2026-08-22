@@ -68,34 +68,54 @@ Settings resolveSettings(
   required Map<String, String> environment,
   String? databaseKey,
 }) {
+  final keyed = databaseKey == null
+      ? settings
+      : settings.withDatabaseKey(databaseKey);
   final testCases = environment[testCasesVariable];
   final database = environment[databaseVariable];
-  return (databaseKey == null
-          ? settings
-          : settings.withDatabaseKey(databaseKey))
-      .overriddenWith(
-        testCases: testCases == null ? null : _casesFrom(testCases),
-        database: database == null
-            ? null
-            // Empty is the way to turn persistence off from the environment,
-            // matching the engine's own reading of an empty database path.
-            : database.isEmpty
-            ? Database.disabled
-            : Database.at(database),
-      );
+  return keyed.overriddenWith(
+    testCases: testCases == null ? null : _casesFrom(testCases),
+    database: database == null || !_canBeKeyed(keyed, database)
+        ? null
+        // Empty is the way to turn persistence off from the environment,
+        // matching the engine's own reading of an empty database path.
+        : database.isEmpty
+        ? Database.disabled
+        : Database.at(database),
+  );
 }
+
+/// Whether pointing [settings] at [database] would mean anything.
+///
+/// A database with no key stores and replays nothing -- the engine wants to
+/// know which property an example belongs to -- and the binding layer refuses
+/// the combination outright rather than pretending. `property()` always
+/// derives a key, so this only ever comes up for a run driven directly, which
+/// has no test identity to derive one from. The variable is left unapplied
+/// there rather than turning an ambient setting into a failed run: it was set
+/// to keep counterexamples somewhere, not to stop a suite.
+bool _canBeKeyed(Settings settings, String database) =>
+    database.isEmpty || settings.databaseKey != null;
 
 /// [value] as a test-case count.
 ///
 /// Refused rather than ignored: a variable set to something that is not a
 /// number was set on purpose, and silently running the default number of
 /// cases would answer a question nobody asked.
+///
+/// Digits only, and at least one. `int.tryParse` would take `0x10` as
+/// sixteen, `+5` and ` 5 ` as five, and zero as zero -- and zero is the
+/// dangerous one, because a run with no cases checks nothing and reports
+/// that the property held. A leftover variable on a CI job would turn a
+/// whole suite green.
 int _casesFrom(String value) {
-  final count = int.tryParse(value);
-  if (count == null || count < 0) {
+  final count = RegExp(r'^[0-9]+$').hasMatch(value)
+      ? int.tryParse(value, radix: 10)
+      : null;
+  if (count == null || count < 1) {
     throw PropertyError(
       '$testCasesVariable is set to "$value", which is not a number of test '
-      'cases',
+      'cases to run',
     );
   }
   return count;

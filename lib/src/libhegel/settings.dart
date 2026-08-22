@@ -288,6 +288,7 @@ final class Settings {
   /// asking for one, since a database with no key stores and replays nothing.
   /// A key the caller chose wins: sharing one between properties is a
   /// deliberate thing to do.
+  @internal
   Settings withDatabaseKey(String key) =>
       databaseKey != null ? this : _copy(databaseKey: key);
 
@@ -296,6 +297,12 @@ final class Settings {
   ///
   /// The opposite of [withDatabaseKey]: these win over what the caller wrote,
   /// because the point of setting one is to change a run without editing it.
+  ///
+  /// Internal, and narrow on purpose. A general `copyWith` over nullable
+  /// fields cannot tell "leave this alone" from "set this to nothing", so as
+  /// public API it would offer a way to turn the database off that silently
+  /// did the opposite.
+  @internal
   Settings overriddenWith({int? testCases, Database? database}) =>
       testCases == null && database == null
       ? this

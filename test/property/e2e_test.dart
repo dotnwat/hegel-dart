@@ -157,6 +157,19 @@ void main() {
     );
   });
 
+  test('a case count of zero is refused rather than obeyed', () async {
+    // A run with no cases checks nothing and reports that the property held,
+    // so before this was refused a leftover variable on a CI job turned a
+    // whole suite green -- including suites full of properties that fail.
+    final zero = await runFixture(
+      <String>['-N', 'is an integer'],
+      environment: <String, String>{'HEGEL_TEST_CASES': '0'},
+    );
+
+    expect(zero.exitCode, isNot(0), reason: describe(zero));
+    expect(zero.stdout, contains('HEGEL_TEST_CASES'));
+  });
+
   test(
     'the environment outranks the settings a property was written with',
     () async {
