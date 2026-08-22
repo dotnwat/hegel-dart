@@ -50,7 +50,9 @@ void main() {
       // Absolute paths differ between machines, and an origin that differs
       // between machines is a different bug on each of them -- including to
       // the example database, which is checked out alongside the code.
-      final file = Uri.file('${Directory.current.path}/test/property/x.dart');
+      // Built from the directory's own URI rather than by pasting a path
+      // together: on Windows the two use different separators.
+      final file = Directory.current.uri.resolve('test/property/x.dart');
       final origin = originOf(
         StateError('boom'),
         traceOf(<String>['main ($file:12:9)']),
@@ -108,6 +110,24 @@ void main() {
         originOf(StateError('boom'), trace),
         'StateError at package:app/a.dart',
       );
+    });
+  });
+
+  group('a frame file', () {
+    test('is separated the same way whatever platform named it', () {
+      // Windows CI and a Linux laptop have to agree. They would not: the
+      // frame renders a file URI with the host's own separator, and that
+      // string ends up in both the origin the engine groups by and the key
+      // the example database files counterexamples under.
+      expect(
+        fileOf(r'test\property\codec_test.dart'),
+        'test/property/codec_test.dart',
+      );
+      expect(
+        fileOf('test/property/codec_test.dart'),
+        'test/property/codec_test.dart',
+      );
+      expect(fileOf('package:app/thing.dart'), 'package:app/thing.dart');
     });
   });
 

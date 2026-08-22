@@ -21,6 +21,17 @@ const Set<String> _frameworkPackages = <String>{
   'test_core',
 };
 
+/// A frame's [library], named the same way on every platform.
+///
+/// `Frame.library` renders a file URI with the host's own separator, so the
+/// same file is `test/codec_test.dart` on one machine and
+/// `test\codec_test.dart` on another. That difference would reach two places
+/// it has no business reaching: the example database key, where it makes a
+/// counterexample found on Windows unreplayable anywhere else, and the
+/// failure origin, where it makes the engine treat one bug as two depending
+/// on who found it.
+String fileOf(String library) => library.replaceAll('\\', '/');
+
 /// A name for wherever [error] came from, stable across runs and machines.
 ///
 /// The engine groups failures by this string and shrinks each group toward
@@ -33,16 +44,18 @@ const Set<String> _frameworkPackages = <String>{
 ///
 /// Derived from the first frame outside the framework, which for a failed
 /// `expect` is the line the expect is on rather than anything inside
-/// package:matcher. File paths come out relative to the working directory,
-/// so two machines checking out the same repository agree.
+/// package:matcher. File paths come out relative to the working directory
+/// and separated the same way everywhere, so two machines checking out the
+/// same repository agree -- including two running different operating
+/// systems, which is the ordinary case for a laptop and its CI.
 String originOf(Object error, StackTrace stack) {
   for (final frame in Trace.from(stack).frames) {
     if (frame.isCore) continue;
     if (_frameworkPackages.contains(frame.package)) continue;
     final line = frame.line;
     return line == null
-        ? '${error.runtimeType} at ${frame.library}'
-        : '${error.runtimeType} at ${frame.library}:$line';
+        ? '${error.runtimeType} at ${fileOf(frame.library)}'
+        : '${error.runtimeType} at ${fileOf(frame.library)}:$line';
   }
   // Nothing but framework frames, which happens when an error is raised from
   // a callback the framework owns. The type alone still groups by kind, which

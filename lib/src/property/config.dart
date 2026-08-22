@@ -4,6 +4,7 @@ library;
 import 'package:stack_trace/stack_trace.dart';
 
 import '../libhegel/settings.dart';
+import 'reporting.dart';
 import 'runner.dart';
 
 /// The frame where the caller reached into this package.
@@ -32,7 +33,8 @@ Frame? callerFrame(StackTrace stack) {
 /// was registered in, relative to where the run started, and [testName] is
 /// the full name package:test knows it by, group prefixes included. Together
 /// they are what `t.Name()` is to hegel-go and `module_path!()` is to
-/// hegel-rust.
+/// hegel-rust. Pass [suite] through [fileOf], so that the key a Windows
+/// developer writes is the key their CI reads.
 ///
 /// Renaming a test therefore orphans its stored counterexample. That is the
 /// same bargain every frontend makes, and the alternative -- asking each

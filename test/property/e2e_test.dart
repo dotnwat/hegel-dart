@@ -21,8 +21,22 @@ const String environmentFixturePath = 'test/fixture/environment_fixture.dart';
 const String databaseFixturePath = 'test/fixture/database_fixture.dart';
 
 /// The first value the database fixture drew, as it printed it.
-int firstDrawnBy(ProcessResult result) =>
-    int.parse(RegExp(r'FIRST=(\d+)').firstMatch('${result.stdout}')!.group(1)!);
+///
+/// A subprocess that failed to start says so in its own output, so anything
+/// that cannot find what it is looking for shows that output rather than
+/// dying on a null check that names nothing.
+int firstDrawnBy(ProcessResult result) {
+  final printed = RegExp(r'FIRST=(\d+)').firstMatch('${result.stdout}');
+  if (printed == null) {
+    fail('the fixture printed no FIRST= line\n${describe(result)}');
+  }
+  return int.parse(printed.group(1)!);
+}
+
+/// What a subprocess said, for a failure message.
+String describe(ProcessResult result) =>
+    'exit ${result.exitCode}\n--- stdout ---\n${result.stdout}'
+    '\n--- stderr ---\n${result.stderr}';
 
 Future<ProcessResult> runFixture(
   List<String> arguments, {
@@ -34,18 +48,30 @@ Future<ProcessResult> runFixture(
   ...arguments,
 ], environment: environment);
 
-/// The line the fixture writes `property('<name>'` on.
-int lineOf(String name) {
-  final lines = File(fixturePath).readAsLinesSync();
-  return lines.indexWhere((String line) => line.contains("property('$name'")) +
-      1;
+/// The line the fixture opens its `property(` call for [name] on.
+///
+/// Found by locating the description and walking back to the call that takes
+/// it, because the two are only on the same line until `dart format` decides
+/// otherwise -- which it already has in database_fixture.dart. Searching for
+/// them together would then quietly find nothing, and an anchor that fails
+/// by returning a line number is worse than one that fails loudly.
+int lineOf(String name, {String path = fixturePath}) {
+  final lines = File(path).readAsLinesSync();
+  final described = lines.indexWhere((String line) => line.contains("'$name'"));
+  if (described < 0) {
+    fail('no line of $path mentions "$name"');
+  }
+  for (var index = described; index >= 0; index--) {
+    if (lines[index].contains('property(')) return index + 1;
+  }
+  return fail('no property( call at or above line ${described + 1}');
 }
 
 void main() {
   test('a property that holds prints nothing but its name', () async {
     final result = await runFixture(<String>['-N', 'is an integer']);
 
-    expect(result.exitCode, 0);
+    expect(result.exitCode, 0, reason: describe(result));
     expect(result.stdout, contains('All tests passed'));
     expect(result.stdout, contains('+1'));
     expect(
@@ -110,6 +136,7 @@ void main() {
     ];
     final property = started.firstWhere(
       (Map<String, Object?> test) => '${test['name']}'.contains('below fifty'),
+      orElse: () => fail('the run started no such test\n${describe(result)}'),
     );
 
     // Without a location the runner reports the frame inside this package,
@@ -117,6 +144,17 @@ void main() {
     // the test.
     expect('${property['url']}', endsWith('/$fixturePath'));
     expect(property['line'], lineOf('every drawn value is below fifty'));
+
+    // The same lookup against a file dart format has already split, which is
+    // what the fixture above turns into the moment it grows an argument.
+    final split = lineOf(
+      'every drawn value is below fifty',
+      path: databaseFixturePath,
+    );
+    expect(
+      File(databaseFixturePath).readAsLinesSync()[split - 1],
+      contains('property('),
+    );
   });
 
   test(
@@ -128,7 +166,7 @@ void main() {
         environment: <String, String>{'HEGEL_TEST_CASES': '3'},
       );
 
-      expect(overridden.exitCode, 0, reason: '${overridden.stdout}');
+      expect(overridden.exitCode, 0, reason: describe(overridden));
     },
   );
 

@@ -10,6 +10,7 @@ import 'package:test_api/hooks.dart';
 
 import '../libhegel/settings.dart';
 import 'config.dart';
+import 'reporting.dart';
 import 'runner.dart';
 import 'test_case.dart';
 
@@ -67,7 +68,7 @@ void property(
       body,
       settings: settings,
       databaseKey: databaseKeyFor(
-        suite: caller?.library ?? '',
+        suite: caller == null ? '' : fileOf(caller.library),
         testName: TestHandle.current.name,
       ),
       reproduce: reproduce,

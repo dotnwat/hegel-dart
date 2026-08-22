@@ -3,6 +3,7 @@ library;
 
 import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/property/config.dart';
+import 'package:hegel/src/property/reporting.dart';
 import 'package:hegel/src/property/runner.dart';
 import 'package:stack_trace/stack_trace.dart';
 import 'package:test/test.dart';
@@ -37,7 +38,7 @@ void main() {
       // absolute one would make every checkout a different property, and
       // nothing would ever replay anywhere but where it was found.
       expect(
-        callerFrame(StackTrace.current)?.library,
+        fileOf(callerFrame(StackTrace.current)!.library),
         'test/property/config_test.dart',
       );
     });
