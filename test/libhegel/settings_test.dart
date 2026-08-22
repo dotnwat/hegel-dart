@@ -215,6 +215,21 @@ void main() {
     });
   });
 
+  group('a database at a path', () {
+    test('is the same database as another at the same path', () {
+      // Value semantics, like the two singletons: settings assembled at
+      // runtime -- from an environment variable, say -- have to be
+      // comparable with settings written down.
+      expect(Database.at('/tmp/examples'), Database.at('/tmp/examples'));
+      expect(
+        Database.at('/tmp/examples').hashCode,
+        Database.at('/tmp/examples').hashCode,
+      );
+      expect(Database.at('/tmp/a'), isNot(Database.at('/tmp/b')));
+      expect(Database.at('/tmp/a'), isNot(Database.standard));
+    });
+  });
+
   group('a database key filled in from outside', () {
     // The layer above derives a key from the test's identity and fills it in,
     // which means copying every other field. A field added to Settings and

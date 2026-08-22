@@ -15,6 +15,7 @@ import '../libhegel/run_result.dart';
 import '../libhegel/session.dart';
 import '../libhegel/settings.dart';
 import '../libhegel/test_case.dart' as engine;
+import 'config.dart';
 import 'reporting.dart';
 import 'test_case.dart';
 
@@ -45,11 +46,21 @@ final class PropertyError implements Exception {
 /// so an `expect` mismatch is reported by package:test exactly as it would be
 /// in a test that failed directly, and a debugger stops where it always did.
 ///
-/// [settings] configures the run; whatever it leaves out, the engine decides.
-/// [onDiagnostic] receives the engine's output and anything the runner has to
-/// say that is not a failure, one line at a time. Left out, it goes to
-/// package:test's on-failure buffer when there is a test to attach it to, and
-/// to stderr when there is not.
+/// [settings] configures the run; whatever it leaves out, the engine decides,
+/// and whatever the environment sets overrides both (see [resolveSettings]).
+/// [databaseKey] scopes the counterexamples this property stores and replays,
+/// unless the settings already name one.
+///
+/// [reproduce] takes a blob from an earlier failure and replays exactly that
+/// case: no generation, no shrinking, one run of the body. It is how a
+/// failure found on a machine with no example database -- a CI job -- is
+/// brought back to one that has a debugger. [printBlob] forces the hint that
+/// prints those blobs on or off; left out, it prints whenever the
+/// counterexample might not have been kept anywhere.
+///
+/// [onDiagnostic] receives the engine's output, line by line, and the failure
+/// report as a block. Left out, both go to package:test's on-failure buffer
+/// when there is a test to attach them to, and to stderr when there is not.
 ///
 /// This is the whole runner. `property()` adds package:test to it and nothing
 /// else, which is what keeps the two honest: a harness that is not
@@ -57,11 +68,22 @@ final class PropertyError implements Exception {
 Future<void> runProperty(
   FutureOr<void> Function(TestCase) body, {
   Settings settings = const Settings(),
+  String? databaseKey,
+  String? reproduce,
+  bool? printBlob,
   void Function(String line)? onDiagnostic,
 }) async {
   final diagnostic = onDiagnostic ?? _defaultDiagnostic();
   final session = Libhegel.instance;
-  final run = Run.start(settings, session: session, onOutput: diagnostic);
+  final resolved = resolveSettings(
+    settings,
+    environment: Platform.environment,
+    databaseKey: databaseKey,
+  );
+  if (reproduce != null) {
+    return _reproduce(reproduce, body, resolved, session, diagnostic);
+  }
+  final run = Run.start(resolved, session: session, onOutput: diagnostic);
   // The case that first failed, kept for the runs that store no
   // counterexample to replay: with nothing to re-run, what it captured is the
   // only account of the failure there will ever be.
@@ -95,11 +117,12 @@ Future<void> runProperty(
         case RunStatus.failedNondeterministic:
           await _report(
             result,
-            settings,
+            resolved,
             session,
             body,
             diagnostic,
             discovered,
+            printBlob,
           );
       }
     } finally {
@@ -205,6 +228,7 @@ Future<Never> _report(
   FutureOr<void> Function(TestCase) body,
   void Function(String line) diagnostic,
   _Outcome? discovered,
+  bool? printBlob,
 ) async {
   final failure = result.failure(0);
   try {
@@ -246,7 +270,13 @@ Future<Never> _report(
 
     // Before raising, so that package:test has the counterexample in hand by
     // the time it prints the failure.
-    _describe(outcome.testCase, settings, diagnostic);
+    _describe(
+      outcome.testCase,
+      settings,
+      diagnostic,
+      blob: blob,
+      printBlob: printBlob,
+    );
     raiseReplayed(origin: origin, error: outcome.error, stack: outcome.stack);
   } finally {
     failure.dispose();
@@ -261,14 +291,69 @@ Future<Never> _report(
 void _describe(
   TestCase testCase,
   Settings settings,
-  void Function(String line) diagnostic,
-) => diagnostic(
+  void Function(String line) diagnostic, {
+  String? blob,
+  bool? printBlob,
+}) => diagnostic(
   renderFailure(
     draws: testCase.draws,
     notes: testCase.notes,
-    hints: reproductionHints(settings),
+    hints: reproductionHints(settings, blob: blob, printBlob: printBlob),
   ),
 );
+
+/// Replays exactly the case [blob] encodes, and reports what it did.
+///
+/// No run and no loop: the blob is already the minimal case, so the body runs
+/// over it once and whatever it does is the answer. A case that no longer
+/// fails is not an error -- it is what a fixed bug looks like from here --
+/// but a blob the body no longer fits is, because then nothing was checked.
+Future<void> _reproduce(
+  String blob,
+  FutureOr<void> Function(TestCase) body,
+  Settings settings,
+  Libhegel session,
+  void Function(String line) diagnostic,
+) async {
+  final engine.TestCase replayCase;
+  try {
+    replayCase = engine.TestCase.fromBlob(settings, blob, session: session);
+  } on HegelException catch (error) {
+    throw PropertyError(
+      'the blob given to reproduce could not be read: ${error.message}',
+    );
+  }
+  final _Outcome outcome;
+  try {
+    outcome = await _runCase(
+      TestCase(EngineDrawContext(replayCase)),
+      body,
+      diagnostic,
+    );
+  } finally {
+    replayCase.dispose();
+  }
+
+  // Whatever happened: someone who asked for one case asked to see it.
+  _describe(outcome.testCase, settings, diagnostic);
+  switch (outcome.error) {
+    case null:
+      return;
+    case StopTest():
+      throw PropertyError(
+        'the blob given to reproduce ran out of choices; the body drew more '
+        'than it holds, so it was recorded from a different property or from '
+        'an older version of this one',
+      );
+    case AssumptionFailed():
+      throw PropertyError(
+        'the blob given to reproduce was rejected as invalid; the body '
+        'assumed something the recorded case does not satisfy',
+      );
+    case final Object error:
+      Error.throwWithStackTrace(error, outcome.stack!);
+  }
+}
 
 /// Raises whatever replaying the counterexample for [origin] amounts to.
 ///

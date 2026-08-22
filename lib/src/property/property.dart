@@ -37,6 +37,11 @@ import 'test_case.dart';
 /// under CI by itself. The one thing this adds is the key those
 /// counterexamples are filed under, derived from the test's own identity.
 ///
+/// [reproduce] replaces the run with a single replay of the case that blob
+/// encodes, which is how a failure from a machine with no example database --
+/// a CI job -- is brought back to one with a debugger. [printBlob] forces the
+/// hint that prints those blobs on or off.
+///
 /// Failures print through package:test's on-failure buffer, so a property
 /// that holds says nothing at all.
 @isTest
@@ -44,6 +49,8 @@ void property(
   Object? description,
   FutureOr<void> Function(TestCase) body, {
   Settings settings = const Settings(),
+  String? reproduce,
+  bool? printBlob,
   String? testOn,
   Timeout? timeout,
   Object? skip,
@@ -58,12 +65,13 @@ void property(
     description,
     () => runProperty(
       body,
-      settings: settings.withDatabaseKey(
-        databaseKeyFor(
-          suite: caller?.library ?? '',
-          testName: TestHandle.current.name,
-        ),
+      settings: settings,
+      databaseKey: databaseKeyFor(
+        suite: caller?.library ?? '',
+        testName: TestHandle.current.name,
       ),
+      reproduce: reproduce,
+      printBlob: printBlob,
     ),
     testOn: testOn,
     timeout: timeout,

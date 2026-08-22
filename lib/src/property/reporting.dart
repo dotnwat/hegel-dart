@@ -179,7 +179,11 @@ String renderFailure({
 /// settings do not say -- on locally, off under CI -- and there is no call
 /// that asks it what it decided. So the line about a database nobody chose
 /// says what the engine does rather than claiming to know what it did.
-List<String> reproductionHints(Settings settings) => <String>[
+List<String> reproductionHints(
+  Settings settings, {
+  String? blob,
+  bool? printBlob,
+}) => <String>[
   switch (settings.database) {
     null =>
       'Kept in the example database and replayed first next time, unless the '
@@ -192,5 +196,18 @@ List<String> reproductionHints(Settings settings) => <String>[
     // it that they did not just write.
     _ => 'Kept in the example database and replayed first next time.',
   },
+  if (blob != null && (printBlob ?? !_keepsCounterexamples(settings.database)))
+    "To reproduce anywhere: property(..., reproduce: '$blob')",
   if (settings.seed case final seed?) 'Seed: $seed.',
 ];
+
+/// Whether [database] is one that was asked to keep counterexamples.
+///
+/// The question the blob hint turns on. Printed by default whenever the
+/// answer is no -- including when nobody chose, because then the engine
+/// decided, it decides against under CI, and CI is exactly where a blob is
+/// the only way to get a failure back. Somebody who did ask for a database
+/// has the counterexample already and does not need a line of base64 under
+/// every failure.
+bool _keepsCounterexamples(Database? database) =>
+    database != null && database != Database.disabled;

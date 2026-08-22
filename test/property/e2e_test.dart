@@ -14,10 +14,18 @@ import 'package:test/test.dart';
 /// framework's failure output can be asked honestly.
 const String fixturePath = 'test/fixture/property_fixture.dart';
 
-Future<ProcessResult> runFixture(List<String> arguments) => Process.run(
-  Platform.resolvedExecutable,
-  <String>['test', fixturePath, ...arguments],
-);
+/// A fixture whose property checks how many cases it was given.
+const String environmentFixturePath = 'test/fixture/environment_fixture.dart';
+
+Future<ProcessResult> runFixture(
+  List<String> arguments, {
+  String fixture = fixturePath,
+  Map<String, String>? environment,
+}) => Process.run(Platform.resolvedExecutable, <String>[
+  'test',
+  fixture,
+  ...arguments,
+], environment: environment);
 
 /// The line the fixture writes `property('<name>'` on.
 int lineOf(String name) {
@@ -102,5 +110,52 @@ void main() {
     // the test.
     expect('${property['url']}', endsWith('/$fixturePath'));
     expect(property['line'], lineOf('every drawn value is below fifty'));
+  });
+
+  test(
+    'the environment outranks the settings a property was written with',
+    () async {
+      final overridden = await runFixture(
+        <String>[],
+        fixture: environmentFixturePath,
+        environment: <String, String>{'HEGEL_TEST_CASES': '3'},
+      );
+
+      expect(overridden.exitCode, 0, reason: '${overridden.stdout}');
+    },
+  );
+
+  test(
+    'and the fixture that proves it fails without the environment',
+    () async {
+      // The control. Without it, a property that quietly ignored the variable
+      // and a property that honoured it would look the same from here.
+      final untouched = await runFixture(
+        <String>[],
+        fixture: environmentFixturePath,
+      );
+
+      expect(untouched.exitCode, isNot(0));
+    },
+  );
+
+  test('the environment can put the example database somewhere', () async {
+    final directory = Directory.systemTemp.createTempSync('hegel-e2e');
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    final result = await runFixture(
+      <String>['-N', 'below fifty'],
+      environment: <String, String>{'HEGEL_DATABASE': directory.path},
+    );
+
+    expect(result.exitCode, isNot(0));
+    expect(
+      directory.listSync(recursive: true).whereType<File>(),
+      isNotEmpty,
+      reason:
+          'the fixture turns the database off and the environment turns '
+          'it back on, which is what a CI job that wants to keep its '
+          'counterexamples has to do',
+    );
   });
 }

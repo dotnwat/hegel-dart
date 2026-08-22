@@ -3,6 +3,9 @@ library;
 
 import 'package:stack_trace/stack_trace.dart';
 
+import '../libhegel/settings.dart';
+import 'runner.dart';
+
 /// The frame where the caller reached into this package.
 ///
 /// Two things need it, both at registration time: package:test is told where
@@ -37,3 +40,61 @@ Frame? callerFrame(StackTrace stack) {
 /// nobody wanted.
 String databaseKeyFor({required String suite, required String testName}) =>
     '$suite:$testName';
+
+/// The variable that overrides how many test cases a run gets.
+const String testCasesVariable = 'HEGEL_TEST_CASES';
+
+/// The variable that overrides where counterexamples are kept.
+///
+/// A path, or the empty string for no database at all.
+const String databaseVariable = 'HEGEL_DATABASE';
+
+/// [settings] as the run will actually use them.
+///
+/// Three sources, in the order they win. [environment] comes first: the two
+/// variables below are the ones hegel-rust honours, and the point of setting
+/// one is to change a run on a machine you cannot edit the source on -- a CI
+/// job that needs its counterexamples kept somewhere, a bisect that needs a
+/// hundred times the cases. Then what the caller wrote. Then the engine,
+/// which decides everything nobody else did.
+///
+/// [databaseKey] is the exception to the order: it fills in a key only when
+/// the caller has none, since a key the caller chose is a deliberate choice
+/// to share stored examples between properties.
+Settings resolveSettings(
+  Settings settings, {
+  required Map<String, String> environment,
+  String? databaseKey,
+}) {
+  final testCases = environment[testCasesVariable];
+  final database = environment[databaseVariable];
+  return (databaseKey == null
+          ? settings
+          : settings.withDatabaseKey(databaseKey))
+      .overriddenWith(
+        testCases: testCases == null ? null : _casesFrom(testCases),
+        database: database == null
+            ? null
+            // Empty is the way to turn persistence off from the environment,
+            // matching the engine's own reading of an empty database path.
+            : database.isEmpty
+            ? Database.disabled
+            : Database.at(database),
+      );
+}
+
+/// [value] as a test-case count.
+///
+/// Refused rather than ignored: a variable set to something that is not a
+/// number was set on purpose, and silently running the default number of
+/// cases would answer a question nobody asked.
+int _casesFrom(String value) {
+  final count = int.tryParse(value);
+  if (count == null || count < 0) {
+    throw PropertyError(
+      '$testCasesVariable is set to "$value", which is not a number of test '
+      'cases',
+    );
+  }
+  return count;
+}

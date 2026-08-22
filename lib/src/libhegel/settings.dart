@@ -191,20 +191,31 @@ final class _PathDatabase extends Database {
   const _PathDatabase(this.path);
 
   final String path;
+
+  // A value, like the two singletons above: two databases at the same path
+  // are the same database, whether or not the same const expression made
+  // them. Without this, settings built at runtime could never be compared
+  // with settings written down.
+  @override
+  bool operator ==(Object other) =>
+      other is _PathDatabase && other.path == path;
+
+  @override
+  int get hashCode => path.hashCode;
 }
 
 /// Configuration for one run.
 ///
-/// Every option is nullable, and an option left null is never sent to the
-/// engine at all. That matters: `hegel_settings_new` applies its own
-/// environment-aware defaults — under CI it disables the database and turns on
-/// derandomization — and calling a setter with a "default" value would
-/// silently overrule them.
+/// Every option is nullable, and an option left null is not sent to the
+/// engine at all — it decides for itself. That matters, because what it
+/// decides depends on where it is running: under CI it turns the example
+/// database off and derandomizes, and passing what looks like a default
+/// would silently overrule that.
 ///
-/// The CI half of that is worth knowing before relying on it: the engine
-/// looks for `CI`, `GITHUB_ACTIONS` and similar, so persistence that works
-/// locally is off by default on a build machine. Anything that wants
-/// counterexamples kept there has to ask for them explicitly.
+/// The CI half is worth knowing before relying on it. The engine looks for
+/// `CI`, `GITHUB_ACTIONS` and similar, so persistence that works locally is
+/// off by default on a build machine, and anything that wants counterexamples
+/// kept there has to ask for them explicitly.
 final class Settings {
   /// Creates settings, leaving anything unspecified to the engine.
   const Settings({
@@ -248,10 +259,14 @@ final class Settings {
 
   /// Scopes stored and replayed examples.
   ///
-  /// Required whenever [database] is enabled; see the refusal in `_apply`.
+  /// Required whenever [database] is enabled: without one the engine stores
+  /// and replays nothing, so asking for a database and leaving this out is
+  /// refused rather than quietly doing nothing. `property()` fills it in from
+  /// the test's own identity.
+  ///
   /// The empty string is a perfectly ordinary key rather than a sentinel --
   /// unlike an empty [Database.at] path -- so it stores and replays like any
-  /// other, and is not refused.
+  /// other.
   final String? databaseKey;
 
   /// Which phases of the loop to run.
@@ -273,25 +288,39 @@ final class Settings {
   /// asking for one, since a database with no key stores and replays nothing.
   /// A key the caller chose wins: sharing one between properties is a
   /// deliberate thing to do.
+  Settings withDatabaseKey(String key) =>
+      databaseKey != null ? this : _copy(databaseKey: key);
+
+  /// This configuration with the settings an environment variable may
+  /// override replaced by whatever is given.
   ///
-  /// Here rather than above because it copies every field: a setting added to
-  /// the list above and forgotten here would be silently dropped.
-  Settings withDatabaseKey(String key) => databaseKey != null
+  /// The opposite of [withDatabaseKey]: these win over what the caller wrote,
+  /// because the point of setting one is to change a run without editing it.
+  Settings overriddenWith({int? testCases, Database? database}) =>
+      testCases == null && database == null
       ? this
-      : Settings(
-          testCases: testCases,
-          statefulStepCount: statefulStepCount,
-          mode: mode,
-          backend: backend,
-          seed: seed,
-          derandomize: derandomize,
-          database: database,
-          databaseKey: key,
-          phases: phases,
-          suppressHealthChecks: suppressHealthChecks,
-          reportMultipleFailures: reportMultipleFailures,
-          verbosity: verbosity,
-        );
+      : _copy(testCases: testCases, database: database);
+
+  /// This configuration with the given fields replaced.
+  ///
+  /// The one place every field is copied, and here rather than in the layer
+  /// that needs it because a setting added to the list above and forgotten
+  /// here would be silently dropped.
+  Settings _copy({int? testCases, Database? database, String? databaseKey}) =>
+      Settings(
+        testCases: testCases ?? this.testCases,
+        statefulStepCount: statefulStepCount,
+        mode: mode,
+        backend: backend,
+        seed: seed,
+        derandomize: derandomize,
+        database: database ?? this.database,
+        databaseKey: databaseKey ?? this.databaseKey,
+        phases: phases,
+        suppressHealthChecks: suppressHealthChecks,
+        reportMultipleFailures: reportMultipleFailures,
+        verbosity: verbosity,
+      );
 
   /// Builds an engine-side settings handle, applies this configuration, and
   /// hands it to [use]. The handle is freed before returning.

@@ -1,7 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/property/config.dart';
+import 'package:hegel/src/property/runner.dart';
 import 'package:stack_trace/stack_trace.dart';
 import 'package:test/test.dart';
 
@@ -65,6 +67,88 @@ void main() {
         isNot(
           databaseKeyFor(suite: 'test/b_test.dart', testName: 'round trips'),
         ),
+      );
+    });
+  });
+
+  group('resolved settings', () {
+    const Settings written = Settings(
+      testCases: 7,
+      seed: 3,
+      database: Database.standard,
+      databaseKey: null,
+    );
+
+    test('keep what the caller wrote when nothing overrides it', () {
+      final resolved = resolveSettings(
+        written,
+        environment: <String, String>{},
+        databaseKey: 'derived',
+      );
+
+      expect(resolved.testCases, 7);
+      expect(resolved.seed, 3);
+      expect(resolved.database, Database.standard);
+      expect(resolved.databaseKey, 'derived');
+    });
+
+    test('leave a key the caller chose alone', () {
+      final resolved = resolveSettings(
+        const Settings(databaseKey: 'shared'),
+        environment: <String, String>{},
+        databaseKey: 'derived',
+      );
+
+      expect(resolved.databaseKey, 'shared');
+    });
+
+    test('let the environment win over what the caller wrote', () {
+      // The point of setting one is to change a run on a machine whose source
+      // you are not editing, so losing to the source would make them useless.
+      final resolved = resolveSettings(
+        written,
+        environment: <String, String>{
+          testCasesVariable: '3',
+          databaseVariable: '/tmp/examples',
+        },
+        databaseKey: 'derived',
+      );
+
+      expect(resolved.testCases, 3);
+      expect(resolved.database, const Database.at('/tmp/examples'));
+      expect(resolved.seed, 3, reason: 'nothing else is touched');
+    });
+
+    test('read an empty database path as no database at all', () {
+      final resolved = resolveSettings(
+        written,
+        environment: <String, String>{databaseVariable: ''},
+        databaseKey: 'derived',
+      );
+
+      expect(resolved.database, Database.disabled);
+    });
+
+    test('refuse a case count that is not one', () {
+      expect(
+        () => resolveSettings(
+          written,
+          environment: <String, String>{testCasesVariable: 'lots'},
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(contains(testCasesVariable), contains('"lots"')),
+          ),
+        ),
+      );
+      expect(
+        () => resolveSettings(
+          written,
+          environment: <String, String>{testCasesVariable: '-1'},
+        ),
+        throwsA(isA<PropertyError>()),
       );
     });
   });

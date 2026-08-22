@@ -250,6 +250,54 @@ void main() {
       );
     });
 
+    test('prints the blob when nobody said to keep counterexamples', () {
+      // The engine decides in that case, it decides against under CI, and CI
+      // is where a blob is the only way to get a failure back.
+      expect(
+        reproductionHints(const Settings(), blob: 'AAEC'),
+        contains(contains("reproduce: 'AAEC'")),
+      );
+      expect(
+        reproductionHints(
+          const Settings(database: Database.disabled),
+          blob: 'AAEC',
+        ),
+        contains(contains("reproduce: 'AAEC'")),
+      );
+    });
+
+    test('leaves it out when the counterexample is being kept', () {
+      expect(
+        reproductionHints(
+          const Settings(database: Database.standard, databaseKey: 'k'),
+          blob: 'AAEC',
+        ),
+        isNot(contains(contains('reproduce'))),
+      );
+    });
+
+    test('does what it is told when it is told', () {
+      expect(
+        reproductionHints(
+          const Settings(database: Database.standard, databaseKey: 'k'),
+          blob: 'AAEC',
+          printBlob: true,
+        ),
+        contains(contains('reproduce')),
+      );
+      expect(
+        reproductionHints(const Settings(), blob: 'AAEC', printBlob: false),
+        isNot(contains(contains('reproduce'))),
+      );
+    });
+
+    test('has nothing to print when there is no blob', () {
+      expect(
+        reproductionHints(const Settings(), printBlob: true),
+        isNot(contains(contains('reproduce'))),
+      );
+    });
+
     test('gives the seed only when there was one to give', () {
       expect(reproductionHints(const Settings(seed: 7)), contains('Seed: 7.'));
       expect(
