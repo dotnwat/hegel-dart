@@ -35,7 +35,10 @@ abstract interface class DrawContext {
   void startSpan(SpanLabel label);
 
   /// Closes the most recently opened span.
-  void stopSpan();
+  ///
+  /// With [discard] the span is closed as rejected, and the engine retries
+  /// from where it opened rather than keeping the draws inside it.
+  void stopSpan({bool discard = false});
 }
 
 /// A [DrawContext] backed by a real engine test case.
@@ -55,7 +58,7 @@ final class EngineDrawContext implements DrawContext {
   void startSpan(SpanLabel label) => testCase.startSpan(label);
 
   @override
-  void stopSpan() => testCase.stopSpan();
+  void stopSpan({bool discard = false}) => testCase.stopSpan(discard: discard);
 }
 
 /// One test case, as a property body sees it.
@@ -135,6 +138,41 @@ final class TestCase {
     } finally {
       _depth--;
       _context.stopSpan();
+    }
+  }
+
+  /// Runs [body] as one attempt at a value composed under [label].
+  ///
+  /// [span], with the engine told whether the attempt was worth keeping.
+  /// [keep] decides, and a span it rejects is closed as discarded: the engine
+  /// then retries from where the span opened instead of carrying the rejected
+  /// draws around for the rest of the case. That is the difference between a
+  /// filter that shrinks and one whose every abandoned attempt stays in the
+  /// choice sequence forever.
+  ///
+  /// Returns whether the value was kept alongside the value itself, rather
+  /// than returning null for a rejected attempt: a generator of nullable
+  /// values has null among the things it can legitimately keep.
+  @internal
+  ({bool kept, T value}) attempt<T>(
+    SpanLabel label,
+    T Function() body, {
+    required bool Function(T value) keep,
+  }) {
+    _context.startSpan(label);
+    _depth++;
+    var kept = false;
+    try {
+      final value = body();
+      kept = keep(value);
+      return (kept: kept, value: value);
+    } finally {
+      _depth--;
+      // An attempt that threw kept nothing, and is not retried either: the
+      // signal that ended it is on its way out past whoever would retry. So
+      // discarding here is about the span rather than about the case, which
+      // by then is over.
+      _context.stopSpan(discard: !kept);
     }
   }
 

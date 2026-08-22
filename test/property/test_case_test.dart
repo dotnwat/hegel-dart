@@ -9,35 +9,7 @@ import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
 import '../support/property_case.dart';
-
-/// A [DrawContext] that answers from a script and records what it was asked.
-///
-/// The engine cannot be asked to hand back a particular value at a particular
-/// point, which is exactly what pinning the bookkeeping around a draw needs.
-final class ScriptedContext implements DrawContext {
-  ScriptedContext(this.integers);
-
-  /// The values [drawInteger] returns, in order.
-  final List<int> integers;
-
-  /// Every call made, as text, so a test can pin the order as well as the
-  /// count -- a span closed before its body ran would otherwise look right.
-  final List<String> calls = <String>[];
-
-  int _next = 0;
-
-  @override
-  int drawInteger({required int min, required int max}) {
-    calls.add('draw $min..$max');
-    return integers[_next++];
-  }
-
-  @override
-  void startSpan(SpanLabel label) => calls.add('start ${label.value}');
-
-  @override
-  void stopSpan() => calls.add('stop');
-}
+import '../support/scripted_context.dart';
 
 void main() {
   group('a test case', () {
@@ -122,6 +94,73 @@ void main() {
         'draw 0..9',
       ]);
       expect(testCase.draws, <Drawn>[(name: null, value: 4)]);
+    });
+
+    test('keeps an attempt its keeper took, and says so', () {
+      final context = ScriptedContext(<int>[6]);
+      final testCase = TestCase(context);
+
+      final (:kept, :value) = testCase.attempt(
+        SpanLabel.filter,
+        () => testCase.draw(integers(min: 0, max: 9)),
+        keep: (int drawn) => drawn.isEven,
+      );
+
+      expect(kept, isTrue);
+      expect(value, 6);
+      expect(context.calls, <String>[
+        'start ${SpanLabel.filter.value}',
+        'draw 0..9',
+        'stop',
+      ]);
+    });
+
+    test('discards an attempt its keeper turned down', () {
+      final context = ScriptedContext(<int>[5]);
+      final testCase = TestCase(context);
+
+      final (:kept, :value) = testCase.attempt(
+        SpanLabel.filter,
+        () => testCase.draw(integers(min: 0, max: 9)),
+        keep: (int drawn) => drawn.isEven,
+      );
+
+      expect(kept, isFalse);
+      // Handed back even so: whoever asked decides what to do with a
+      // rejected value, and a nullable generator's null is not a rejection.
+      expect(value, 5);
+      expect(context.calls.last, 'discard');
+    });
+
+    test('discards an attempt whose body threw, and closes it once', () {
+      final context = ScriptedContext(<int>[]);
+      final testCase = TestCase(context);
+
+      expect(
+        () => testCase.attempt<int>(
+          SpanLabel.filter,
+          () => throw StateError(''),
+          keep: (int drawn) => true,
+        ),
+        throwsStateError,
+      );
+
+      expect(context.calls, <String>[
+        'start ${SpanLabel.filter.value}',
+        'discard',
+      ]);
+    });
+
+    test('leaves an attempt\'s draws out of the report', () {
+      final testCase = TestCase(ScriptedContext(<int>[3]));
+
+      testCase.attempt(
+        SpanLabel.filter,
+        () => testCase.draw(integers(min: 0, max: 9)),
+        keep: (int drawn) => true,
+      );
+
+      expect(testCase.draws, isEmpty);
     });
 
     test('records notes as the text they were at the time', () {
