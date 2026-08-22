@@ -9,6 +9,7 @@ import 'test_case.dart';
 
 part 'catalog.dart';
 part 'combinators.dart';
+part 'composite.dart';
 
 /// A recipe for values of type [T].
 ///
@@ -20,7 +21,7 @@ part 'combinators.dart';
 /// parts in the span the engine expects. That is what the shrinker works
 /// from -- delete this element, simplify that component -- so a generator
 /// built outside the algebra would not shrink so much as fall apart. Custom
-/// generation has its own door, `composite`, which is a function rather than
+/// generation has its own door, [composite], which is a function rather than
 /// a subclass.
 abstract final class Generator<T> {
   /// For the generators in this library.

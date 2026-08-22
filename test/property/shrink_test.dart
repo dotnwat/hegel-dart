@@ -6,6 +6,7 @@ import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
 import '../support/shrink_pin.dart';
+import '../support/tree.dart';
 
 void main() {
   group('a mapped generator', () {
@@ -176,6 +177,43 @@ void main() {
       });
 
       expect(report, contains('triple = (0, 0, 31)'));
+    });
+  });
+
+  group('a composite generator', () {
+    test('shrinks the parts it built the value out of', () async {
+      // The second draw's range starts at the first, so a low of zero is
+      // what lets the high shrink as far as six -- the smallest pair more
+      // than five apart. Reporting anything wider would mean the parts were
+      // being shrunk one at a time against a failure that needs both.
+      final report = await shrunkReport((TestCase testCase) {
+        final (low, high) = testCase.draw(
+          composite((TestCase inner) {
+            final low = inner.draw(integers(min: 0, max: 100));
+            final high = inner.draw(integers(min: low, max: 200));
+            return (low, high);
+          }),
+          name: 'range',
+        );
+        if (high - low > 5) throw StateError('$low..$high is too wide');
+      });
+
+      expect(report, contains('range = (0, 6)'));
+    });
+  });
+
+  group('a recursive generator', () {
+    test('shrinks to the smallest tree that still fails', () async {
+      // The pin that most needs its spans. A tree is drawn from dozens of
+      // choices, and shrinking one means deleting whole subtrees; without
+      // the spans that say which choices are a subtree the engine has to
+      // pick at them one at a time, and this stops finishing at all.
+      final report = await shrunkReport((TestCase testCase) {
+        final tree = testCase.draw(trees(), name: 'tree');
+        if (tree.leaves >= 2) throw StateError('$tree has too many leaves');
+      });
+
+      expect(report, contains('tree = Branch(Leaf(0), Leaf(0))'));
     });
   });
 }

@@ -11,8 +11,12 @@
 /// engine does not need a span to walk one integer down. What these pins say
 /// about such a value is that the shrunk case is genuinely the smallest one
 /// the generator can produce that still fails -- that a filter, say, did not
-/// report a value it was meant to have filtered out. The pins that bite on
-/// span placement are the ones over values with parts.
+/// report a value it was meant to have filtered out.
+///
+/// The pins that bite on span placement are the ones over values with parts,
+/// and the deeper the parts go the harder they bite. Measured while writing
+/// them: with the spans removed, the fixed-shape pins here still pass, and
+/// the recursive one does not finish at all.
 ///
 /// Pinned values belong to an engine version. A bump that changes one is not
 /// automatically a regression, but it is always a review question, and the
