@@ -224,6 +224,23 @@ void main() {
       );
     });
 
+    test('reads its bounds as the wall clock they show', () {
+      // A local bound and a UTC one showing the same numbers are the same
+      // bound, whatever zone the machine is in. Comparing the instants
+      // instead would make this generator mean different things in
+      // different places -- and would let the pair below through, to be
+      // inverted inside the engine.
+      final values = drawEveryCase(
+        openSession(),
+        dateTimes(
+          min: DateTime(2021, 6, 15, 12),
+          max: DateTime.utc(2021, 6, 15, 12),
+        ),
+      );
+
+      expect(values, everyElement(DateTime.utc(2021, 6, 15, 12)));
+    });
+
     test('refuses an inverted range where it was written', () {
       expect(
         () => dateTimes(
@@ -233,6 +250,39 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('refuses a range only the wall clock shows to be inverted', () {
+      // Inverted as wall clocks, which is what the engine is handed, while
+      // as instants the minimum is the earlier one in every zone east of
+      // UTC-5. Comparing the arguments would pass this and fail on the
+      // first case.
+      expect(
+        () => dateTimes(
+          min: DateTime.utc(2020, 1, 1, 10),
+          max: DateTime(2020, 1, 1, 5),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test(
+      'refuses a single bound that inverts the default at the other end',
+      () {
+        // No second argument to compare against, which is how this got past
+        // the check that only looked when both were given.
+        expect(() => dateTimes(min: DateTime.utc(10000)), throwsArgumentError);
+        expect(
+          () => dateTimes(
+            max: DateTime.utc(
+              1,
+              1,
+              1,
+            ).subtract(const Duration(microseconds: 1)),
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
   });
 
   group('uuids', () {
@@ -322,6 +372,35 @@ void main() {
       expect(
         v6.map((InternetAddress a) => a.rawAddress.length),
         everyElement(16),
+      );
+    });
+
+    test('refuses a family it cannot draw', () {
+      expect(
+        () => ipAddresses(type: InternetAddressType.unix),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('socket path'),
+          ),
+        ),
+      );
+    });
+
+    test('reads `any` as either family, the way a missing one reads', () {
+      final values = drawEveryCase(
+        openSession(),
+        ipAddresses(type: InternetAddressType.any),
+        testCases: 40,
+      );
+
+      expect(
+        values.map((InternetAddress a) => a.type).toSet(),
+        <InternetAddressType>{
+          InternetAddressType.IPv4,
+          InternetAddressType.IPv6,
+        },
       );
     });
 

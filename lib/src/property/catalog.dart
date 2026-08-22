@@ -899,6 +899,14 @@ final class _TimeGenerator extends Generator<Duration> {
 /// time, and UTC is how Dart says "no zone applied". A generator of instants
 /// in a particular zone is this one mapped into it.
 ///
+/// The bounds are read the same way [dates] reads them: as the wall clock a
+/// [DateTime] displays, not as the instant it stands for. A local bound and a
+/// UTC one that show the same numbers mean the same bound here, and two that
+/// show different numbers are different bounds even where they name the same
+/// instant. Anything else would put a generator's meaning at the mercy of the
+/// machine's time zone, which is not a thing a counterexample should depend
+/// on.
+///
 /// Values shrink toward 2000-01-01 midnight.
 Generator<DateTime> dateTimes({DateTime? min, DateTime? max}) {
   final low = min == null
@@ -907,11 +915,25 @@ Generator<DateTime> dateTimes({DateTime? min, DateTime? max}) {
   final high = max == null
       ? (date: _latestDate, time: _lastMicrosecond)
       : _dateTimeOf(max);
-  if (min != null && max != null && min.isAfter(max)) {
+  // The encoded pair rather than the arguments, and whether or not both were
+  // given. What the engine is handed is the wall clock, so that is what has
+  // to be in order: comparing the instants instead lets a UTC minimum and a
+  // local maximum pass here and invert there. And a single bound is still a
+  // bound -- a minimum past year 9999 inverts the range against the default
+  // maximum, with no second argument to compare it to.
+  if (_dateTimeValue(low).compareTo(_dateTimeValue(high)) > 0) {
     throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
   }
   return _DateTimeGenerator(low, high);
 }
+
+/// A date and time as one comparable string, zero-padded so that it orders.
+String _dateTimeValue(engine.HegelDateTime value) =>
+    '${_dateValue(value.date).toString().padLeft(9, '0')}'
+    '${value.time.hour.toString().padLeft(2, '0')}'
+    '${value.time.minute.toString().padLeft(2, '0')}'
+    '${value.time.second.toString().padLeft(2, '0')}'
+    '${value.time.microsecond.toString().padLeft(6, '0')}';
 
 const engine.HegelTime _startOfDay = (
   hour: 0,
@@ -1004,8 +1026,16 @@ Generator<InternetAddress> ipAddresses({InternetAddressType? type}) =>
     switch (type) {
       InternetAddressType.IPv4 => const _AddressGenerator(4),
       InternetAddressType.IPv6 => const _AddressGenerator(6),
-      // The ONE_OF shape, so the choice shrinks toward the simpler family
-      // the same way any other choice between generators does.
+      // A Unix socket path is an InternetAddress in Dart's types and is not
+      // an address the engine draws. Refused rather than quietly answered
+      // with an internet address, which is not what was asked for.
+      InternetAddressType.unix => throw ArgumentError.value(
+        type,
+        'type',
+        'is a socket path rather than an address the engine can draw',
+      ),
+      // Null or `any`: the ONE_OF shape, so the choice shrinks toward the
+      // simpler family the way any other choice between generators does.
       _ => oneOf(<Generator<InternetAddress>>[
         const _AddressGenerator(4),
         const _AddressGenerator(6),
