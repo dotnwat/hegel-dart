@@ -32,7 +32,10 @@ void main() {
 
   /// Runs a sequential machine, recording which rules ran.
   ({List<int> applied, RunStatus status, List<int> concurrencies})
-  driveMachine({bool Function(int ruleIndex)? precondition}) {
+  driveMachine({
+    bool Function(int ruleIndex)? precondition,
+    List<String> invariantNames = const <String>[],
+  }) {
     final run = Run.start(settings, session: session);
     final applied = <int>[];
     final concurrencies = <int>[];
@@ -41,7 +44,10 @@ void main() {
         final testCase = run.nextTestCase();
         if (testCase == null) break;
         try {
-          final machine = testCase.newStateMachine(ruleNames: rules);
+          final machine = testCase.newStateMachine(
+            ruleNames: rules,
+            invariantNames: invariantNames,
+          );
           concurrencies.add(machine.concurrency);
           try {
             while (machine.nextGroup(testCase) != null) {
@@ -186,12 +192,47 @@ void main() {
       expect(machine.concurrency, 1);
     });
 
+    test('validates invariant names like any other string it marshals', () {
+      expect(
+        () => testCase.newStateMachine(
+          ruleNames: rules,
+          invariantNames: const <String>['fine', 'has\u0000interior'],
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('refuses a worker index outside the drawn concurrency', () {
       final machine = testCase.newStateMachine(ruleNames: rules);
       addTearDown(machine.dispose);
       expect(() => machine.nextRule(testCase, 1), throwsRangeError);
       expect(() => machine.nextRule(testCase, -1), throwsRangeError);
       expect(() => machine.ruleRejected(testCase, 5), throwsRangeError);
+    });
+  });
+
+  group('registered invariants', () {
+    // The engine takes the names, checks them, and keeps nothing: there is no
+    // next_invariant to answer, and the native machine has no field to store
+    // them in. Running invariants is the caller's job, between rounds.
+    //
+    // So the useful claim is a negative one, and it is the one the property
+    // layer will lean on: adding an invariant must not change what a seed
+    // explores. If registering them drew so much as one value, every existing
+    // seed would come to mean something different the moment someone added an
+    // invariant to a test.
+    test('do not change what a seed explores', () {
+      final without = driveMachine();
+      final with_ = driveMachine(
+        invariantNames: const <String>['balanced', 'nonNegative', 'sorted'],
+      );
+
+      expect(with_.applied, without.applied);
+      expect(with_.status, without.status);
+      expect(with_.concurrencies, without.concurrencies);
+      // Otherwise two empty runs would agree with each other and prove
+      // nothing at all.
+      expect(without.applied, isNotEmpty);
     });
   });
 

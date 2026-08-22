@@ -364,6 +364,18 @@ final class TestCase implements ffi.Finalizable {
   /// [minConcurrency] to [maxConcurrency] and the caller must run exactly that
   /// many workers.
   ///
+  /// [invariantNames] is registration only. The engine validates the names
+  /// and keeps nothing: there is no call that asks for an invariant to be
+  /// checked, and nothing reports one as violated. Running invariants is the
+  /// caller's job -- between rounds, against its own model -- and a violation
+  /// is reported the way any other failure is, by completing the case as
+  /// [TestCaseStatus.interesting] with an origin naming the invariant.
+  ///
+  /// Registering them draws nothing, so adding an invariant to a test does
+  /// not change what its seed explores. That is worth relying on: were it
+  /// otherwise, every recorded seed would come to mean something else the
+  /// moment an invariant was added.
+  ///
   /// Asking for more than one worker declares the run nondeterministic. The
   /// first such request on a run raises [AssumptionFailed]: abandon the body
   /// and report the case invalid, and the engine will allow it from the next
