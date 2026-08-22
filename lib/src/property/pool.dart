@@ -39,7 +39,10 @@ part of 'generator.dart';
 ///
 /// Its life is the test case it was made from: the engine handle behind it is
 /// released when that case ends, whatever ends it, so there is nothing to
-/// close.
+/// close. A pool made inside a rule of a concurrent machine belongs to that
+/// worker's case and goes when its round is over, which is a shorter life
+/// than the one a machine's own field gets -- another reason to build a pool
+/// where the machine is built rather than where a rule runs.
 final class Pool<T> {
   /// A pool over the family of [testCase], empty to begin with.
   Pool(TestCase testCase) : _pool = testCase.context.startPool() {

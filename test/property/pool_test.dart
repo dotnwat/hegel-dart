@@ -1,13 +1,13 @@
 @TestOn('vm')
 library;
 
-import 'package:hegel/src/libhegel/leaks.dart';
 import 'package:hegel/src/property/generator.dart';
 import 'package:hegel/src/property/runner.dart';
 import 'package:hegel/src/property/stateful.dart';
 import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/scripted_context.dart';
 import '../support/shrink_pin.dart';
 
 /// A resource that can be opened once and closed once.
@@ -65,6 +65,28 @@ final class _HandleMachine extends StateMachine {
       log.add('close ${handle.id}');
     }, precondition: () => pool.isNotEmpty),
   ];
+}
+
+/// A context whose pool records what was done to it.
+final class _PoolContext extends FakeDrawContext {
+  final _RecordingPool pool = _RecordingPool();
+
+  @override
+  DrawPool startPool() => pool;
+}
+
+/// A pool that counts its own disposals instead of holding a handle.
+final class _RecordingPool implements DrawPool {
+  int disposals = 0;
+
+  @override
+  int add(DrawContext from) => 0;
+
+  @override
+  int draw(DrawContext from, {required bool consume}) => 0;
+
+  @override
+  void dispose() => disposals++;
 }
 
 /// A machine built out of the rules a test hands it.
@@ -176,23 +198,72 @@ void main() {
       }
     });
 
-    test('releases its engine handle when the case ends', () async {
-      // A pool outlives every draw taken from it, so nothing in a property
-      // body is in a position to release it. The case is, and does -- which
-      // the leak tracker is what notices.
-      final leaks = <String>[];
-      reportLeak = (LeakReport report) => leaks.add(report.kind);
-      addTearDown(resetLeakReporting);
+    test('registers its release on the case that made it', () {
+      // Asserted against the seam rather than against the leak tracker. A
+      // leak is reported from a finalizer, so a test that watches for one
+      // proves nothing when the collector does not happen to run -- and the
+      // first version of this test passed with the release removed
+      // altogether, which is the only kind of test worth deleting.
+      final context = _PoolContext();
+      final testCase = TestCase(context);
+
+      Pool<int>(testCase);
+      expect(context.pool.disposals, 0, reason: 'not while the case runs');
+
+      testCase.release();
+      expect(context.pool.disposals, 1);
+
+      // Idempotent, because a case may be released on a path that has already
+      // released it.
+      testCase.release();
+      expect(context.pool.disposals, 1);
+    });
+  });
+
+  group('the case a pool lives on', () {
+    test('is released by the runner when it ends, once per case', () async {
+      // What a pool depends on, checked where it is decided. Registered from
+      // the body, so this fails outright if the runner ever stops releasing:
+      // no collector, no finalizer, nothing that can quietly not happen.
+      var cases = 0;
+      var released = 0;
 
       await runProperty((TestCase testCase) {
-        Pool<int>(testCase).add(testCase, 1);
-      }, settings: pinSettings(testCases: 20));
+        cases++;
+        testCase.onRelease(() => released++);
+        // Drawn, so the engine has something to vary: a body that draws
+        // nothing is the same case every time, and the run stops after one.
+        testCase.draw(integers(min: 0, max: 100));
+      }, settings: pinSettings(testCases: 15));
 
-      // Every pool the run made is gone; a leak report would name one that
-      // was collected without being disposed.
-      await _collect();
-      expect(leaks, isEmpty);
+      expect(cases, greaterThan(1));
+      expect(released, cases);
     });
+
+    test(
+      'is released after a failing case too, and after the replay',
+      () async {
+        var released = 0;
+
+        await expectLater(
+          runProperty(
+            (TestCase testCase) {
+              testCase.onRelease(() => released++);
+              testCase.draw(integers(min: 0, max: 100));
+              throw StateError('always');
+            },
+            settings: pinSettings(testCases: 5),
+            onDiagnostic: (String _) {},
+          ),
+          throwsA(isA<StateError>()),
+        );
+
+        // Every generated case, plus the replay of the counterexample: the path
+        // that reports a failure releases what it ran as surely as the one that
+        // does not.
+        expect(released, greaterThan(1));
+      },
+    );
   });
 
   group('a pool inside a machine', () {
@@ -214,11 +285,4 @@ void main() {
       expect(report, contains('chosen = 0'));
     });
   });
-}
-
-/// Gives the collector a chance to notice what nobody is holding.
-Future<void> _collect() async {
-  for (var turn = 0; turn < 5; turn++) {
-    await Future<void>.delayed(Duration.zero);
-  }
 }

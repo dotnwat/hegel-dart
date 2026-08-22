@@ -615,6 +615,62 @@ void main() {
     });
   });
 
+  group('what a worker took out', () {
+    test('is given back when its round is over', () async {
+      // A worker's case is a case: a rule that made something case-scoped
+      // registered it on the worker rather than on the root, and only the
+      // driver knows to give it back. Nothing else will -- the runner
+      // releases the case the property body was handed, and has never heard
+      // of the clones underneath it.
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[0],
+      ]);
+      var released = 0;
+
+      await runStateful(
+        TestCase(context),
+        _Machine(<Rule>[
+          Rule(
+            'makes something',
+            (TestCase tc) => tc.onRelease(() => released++),
+          ),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      expect(released, 2, reason: 'one per worker');
+      // And the handle after the case, not before it.
+      expect(context.calls, contains('worker released'));
+    });
+
+    test(
+      'leaves the root case alone, which is not the driver\'s to end',
+      () async {
+        // The trap in the other direction. At one worker the worker *is* the
+        // root case, and releasing it here would take a pool away from a body
+        // that has not finished with it -- the runner releases that one, when
+        // the case ends rather than when the machine does.
+        final context = _ScriptedMachine(<List<int>>[
+          <int>[0],
+        ]);
+        final testCase = TestCase(context);
+        var released = 0;
+        testCase.onRelease(() => released++);
+
+        await runStateful(
+          testCase,
+          _Machine(<Rule>[Rule('push', (TestCase tc) {})]),
+        );
+
+        expect(released, 0, reason: 'the body may still be using it');
+        testCase.release();
+        expect(released, 1);
+      },
+    );
+  });
+
   group('a planted bug', () {
     test('is found, and shrunk to the shortest script that shows it', () async {
       final report = await shrunkReport((TestCase testCase) async {

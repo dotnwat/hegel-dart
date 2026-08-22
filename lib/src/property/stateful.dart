@@ -270,11 +270,21 @@ List<_Worker> _workersFor(TestCase testCase, int concurrency) {
     for (var index = 0; index < concurrency; index++)
       () {
         final clone = testCase.context.cloneForWorker();
+        final worker = TestCase(clone.context);
         return _Worker(
           index,
-          TestCase(clone.context),
+          worker,
           clone.context,
-          release: clone.release,
+          // The case first and the handle after it, because a worker's case
+          // is a case: a rule that made something case-scoped registered it
+          // here, and only this knows to give it back. The root case is
+          // released by the runner when the *case* ends, which is why the one
+          // worker of a sequential run releases nothing -- doing it here
+          // would take a pool away from a body that has not finished with it.
+          release: () {
+            worker.release();
+            clone.release();
+          },
         );
       }(),
   ];

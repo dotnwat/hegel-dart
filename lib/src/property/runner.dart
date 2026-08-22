@@ -105,9 +105,11 @@ Future<void> runProperty(
         }
         engineCase.markComplete(outcome.status, origin: outcome.origin);
       } finally {
-        // Before the engine case, since what the body took out lives on its
-        // family: a pool released after the case it belongs to would be
-        // released against a handle that is already gone.
+        // Before the engine case rather than after. Nothing in the ABI
+        // requires it -- a pool handle is explicitly independent of the case
+        // it was made on and may be freed in any order -- but this is the
+        // order that stays right as things are added to it: a resource that
+        // does need its case alive would be released while it still is.
         testCase.release();
         engineCase.dispose();
       }
