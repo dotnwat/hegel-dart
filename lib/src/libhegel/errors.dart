@@ -75,9 +75,16 @@ final class StopTest implements Exception {
 
 /// Signals that an assumption did not hold, so this test case is invalid.
 ///
-/// Control flow, not an error, exactly like [StopTest]. Draws that reject
-/// themselves and a caller's own failed precondition raise the same type, so
-/// engine-side and caller-side rejection unify in one catch.
+/// Control flow, not an error: the case is abandoned rather than failed, it
+/// does not count toward the number of cases the property was asked for, and
+/// the engine generates away from it. A draw that rejects itself and a
+/// caller's own failed precondition raise the same type, so engine-side and
+/// caller-side rejection unify in one catch.
+///
+/// A body that catches one must rethrow it. Nothing else records that the
+/// case was rejected, so swallowing one turns a case the property never
+/// checked into a case it passed -- and a run that rejected everything into
+/// a run that held.
 final class AssumptionFailed implements Exception {
   /// Creates the signal.
   const AssumptionFailed();

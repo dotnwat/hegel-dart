@@ -8,3 +8,8 @@
 tags:
   slow:
     timeout: 3x
+
+  # Subprocess runs of the fixtures under test/fixture/. Seconds rather than
+  # milliseconds, because each one starts a `dart test` of its own.
+  e2e:
+    timeout: 2x

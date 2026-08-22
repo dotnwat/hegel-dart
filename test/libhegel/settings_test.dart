@@ -215,6 +215,60 @@ void main() {
     });
   });
 
+  group('a database at a path', () {
+    test('is the same database as another at the same path', () {
+      // Value semantics, like the two singletons: settings assembled at
+      // runtime -- from an environment variable, say -- have to be
+      // comparable with settings written down.
+      expect(Database.at('/tmp/examples'), Database.at('/tmp/examples'));
+      expect(
+        Database.at('/tmp/examples').hashCode,
+        Database.at('/tmp/examples').hashCode,
+      );
+      expect(Database.at('/tmp/a'), isNot(Database.at('/tmp/b')));
+      expect(Database.at('/tmp/a'), isNot(Database.standard));
+    });
+  });
+
+  group('a database key filled in from outside', () {
+    // The layer above derives a key from the test's identity and fills it in,
+    // which means copying every other field. A field added to Settings and
+    // forgotten by that copy would simply stop being applied, so the check is
+    // which setters the engine sees rather than a list of fields written out
+    // again here.
+    const Settings everything = Settings(
+      testCases: 5,
+      statefulStepCount: 3,
+      mode: Mode.singleTestCase,
+      backend: Backend.seeded,
+      seed: 9,
+      derandomize: true,
+      database: Database.disabled,
+      phases: <Phase>{Phase.generate},
+      suppressHealthChecks: <HealthCheck>{HealthCheck.tooSlow},
+      reportMultipleFailures: true,
+      verbosity: Verbosity.quiet,
+    );
+
+    test('changes nothing else about the settings', () {
+      final without = settersCalledFor(everything);
+      final withKey = settersCalledFor(everything.withDatabaseKey('derived'));
+
+      expect(withKey.toSet().difference(without.toSet()), <String>{
+        'hegel_settings_set_database_key',
+      });
+      expect(withKey, hasLength(without.length + 1));
+    });
+
+    test('leaves a key the caller chose alone', () {
+      // Sharing one key between properties is a deliberate thing to do, and
+      // a derived key would silently undo it.
+      const chosen = Settings(databaseKey: 'shared between properties');
+
+      expect(chosen.withDatabaseKey('derived'), same(chosen));
+    });
+  });
+
   group('against the real engine', () {
     test('applies a full configuration and frees the handle', () {
       final session = Libhegel.open();

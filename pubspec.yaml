@@ -29,6 +29,26 @@ dependencies:
   hooks: ^2.2.0
   # @internal / @visibleForTesting on the binding surface.
   meta: ^1.19.0
+  # Parsing a failure's stack into frames, to name where it came from. Already
+  # present through package:test; the house rule is that nothing is relied on
+  # transitively.
+  stack_trace: ^1.12.0
+  # property() registers a package:test test, so the runner ships with one
+  # rather than borrowing the caller's.
+  test: ^1.31.0
+  # TestHandle.current, the sanctioned way to ask what test is running. The
+  # package's own README calls it not for public use; hooks.dart is the part
+  # that is, and it is the only seam that gives a property a stable identity
+  # without macros.
+  #
+  # This range, not the one above, decides who can use this package. Each
+  # test release pins test_api exactly (1.31.0 -> 0.7.11, 1.31.1 -> 0.7.12,
+  # 1.31.2 -> 0.7.13) and so does flutter_test (0.7.12 on stable 3.47), so a
+  # narrow range here rules out Flutter stables and test releases that would
+  # otherwise work -- ^0.7.12 quietly made the declared floor of 1.31.0
+  # unreachable. Not widened past 0.7.11, which is as far back as this is
+  # exercised; TestLocation and test()'s location: go back to 0.7.9.
+  test_api: '>=0.7.11 <0.8.0'
 
 dev_dependencies:
   async: ^2.13.1
@@ -40,4 +60,3 @@ dev_dependencies:
   path: ^1.9.0
   ffigen: 20.1.1
   lints: ^6.1.0
-  test: ^1.31.2

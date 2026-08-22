@@ -1,17 +1,14 @@
 @TestOn('vm')
 library;
 
-// The barrel exports nothing yet, so importing it is the whole point of this
-// test: it proves the package resolves and its library compiles. Drop the
-// ignore once the public API lands.
-// ignore: unused_import
 import 'package:hegel/hegel.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('the package barrel resolves and compiles', () {
-    // Reaching this point means `package:hegel/hegel.dart` was resolved and
-    // compiled by the test runner.
-    expect(true, isTrue);
+  test('the barrel exposes the public API', () {
+    // What is being checked is the export graph, not the generator: a type
+    // that has to be imported from `src/` to be named is not public, however
+    // public its declaration looks.
+    expect(integers(min: 0, max: 1), isA<Generator<int>>());
   });
 }
