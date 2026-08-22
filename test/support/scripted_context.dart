@@ -76,6 +76,13 @@ abstract base class FakeDrawContext implements DrawContext {
   @override
   Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
+  // Recorded rather than refused, like the spans: there is no value to
+  // invent, so a fake that has none of these is still a fake that can be
+  // asked for one.
+  @override
+  void target(double value, {required String label}) =>
+      calls.add('target $value as $label');
+
   @override
   DrawCollection startCollection({required int minLength, int? maxLength}) =>
       _unscripted('a collection');
