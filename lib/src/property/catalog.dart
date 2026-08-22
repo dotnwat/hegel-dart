@@ -388,3 +388,246 @@ final class _DurationGenerator extends Generator<Duration> {
     microseconds: testCase.context.drawInteger(min: _min, max: _max),
   );
 }
+
+/// A generator whose values the engine's string machinery makes.
+///
+/// One native generator per instance, built on the first draw and kept for
+/// the life of the process. Building is expensive -- a regex to compile, a
+/// Unicode table to walk -- and the ABI will only take it back once every
+/// draw using it has finished, which is a moment an API of value-like
+/// generators never reaches. So it is never taken back, and the leak tracker
+/// is told so rather than left to report it. The cost is bounded by how many
+/// string generators a program writes, which is a number of lines of source,
+/// not a number of test cases.
+///
+/// One consequence of building on the first draw rather than at
+/// construction: a specification the engine refuses -- an unknown codec, a
+/// domain length with no room for a TLD -- is refused on that first draw,
+/// inside a test case, rather than on the line that wrote it. The engine's
+/// own message comes through, so what is wrong is legible; where it is wrong
+/// is not, and that is the price of not opening a session to build a
+/// generator nobody may draw from.
+abstract base class _NativeStringGenerator extends Generator<String> {
+  _NativeStringGenerator();
+
+  engine.StringGenerator? _native;
+
+  /// Whether the native generator behind this one has been built.
+  ///
+  /// The cache is invisible from outside by design, and both halves of it --
+  /// that nothing is built until a draw asks, and that nothing is built twice
+  /// -- are worth a test.
+  @visibleForTesting
+  bool get isNativeBuilt => _native != null;
+
+  /// Builds the native generator this one draws through.
+  engine.StringGenerator buildNative();
+
+  engine.StringGenerator get _nativeGenerator {
+    final built = _native;
+    if (built != null) return built;
+    final made = buildNative();
+    assert(exemptHandle(made));
+    return _native = made;
+  }
+
+  @override
+  String generate(TestCase testCase) =>
+      testCase.context.drawString(_nativeGenerator);
+}
+
+/// Generates strings over an alphabet.
+///
+/// The type [text] and [characters] return, named separately because
+/// [fromRegex] takes one as the alphabet its padding is drawn from.
+final class TextGenerator extends _NativeStringGenerator {
+  TextGenerator._(this._spec);
+
+  final _TextSpec _spec;
+
+  @override
+  engine.StringGenerator buildNative() => engine.StringGenerator.text(
+    minSize: _spec.minLength,
+    maxSize: _spec.maxLength,
+    codec: _spec.codec,
+    // The engine takes a range rather than a nullable one, and its widest
+    // range is what "no restriction" means here.
+    minCodepoint: _spec.minCodepoint ?? 0,
+    maxCodepoint: _spec.maxCodepoint ?? 0xFFFFFFFF,
+    categories: _spec.categories,
+    excludeCategories: _spec.excludeCategories,
+    includeCharacters: _spec.includeCharacters,
+    excludeCharacters: _spec.excludeCharacters,
+    session: Libhegel.instance,
+  );
+}
+
+/// Everything [text] was asked for, kept until the first draw needs it.
+typedef _TextSpec = ({
+  int minLength,
+  int? maxLength,
+  String? codec,
+  int? minCodepoint,
+  int? maxCodepoint,
+  List<String>? categories,
+  List<String>? excludeCategories,
+  String? includeCharacters,
+  String? excludeCharacters,
+});
+
+/// Generates strings of [minLength] to [maxLength] characters.
+///
+/// The bounds count **characters**, not what `String.length` counts: a string
+/// of five characters drawn from the whole of Unicode can have a `length` of
+/// ten, because Dart measures a string in UTF-16 code units and an emoji is
+/// two of them. `runes.length` is the number these bounds are about. A null
+/// [maxLength] leaves the length to the engine, which keeps it small on its
+/// own.
+///
+/// The alphabet is everything by default, and narrows by any combination of:
+/// [codec] (`ascii`, `latin-1`, `utf-8`) for the starting range,
+/// [minCodepoint] and [maxCodepoint] for a range of code points, [categories]
+/// and [excludeCategories] for Unicode general categories (`Lu`, `Nd`, and so
+/// on), and [includeCharacters] and [excludeCharacters] for named characters.
+/// A null [categories] means no restriction; an empty one means an alphabet
+/// with nothing in it, which is how a generator of exactly the characters in
+/// [includeCharacters] is written.
+///
+/// Wide by default on purpose. A string generator restricted to ASCII finds
+/// ASCII bugs; the family's position, and this library's, is that text is
+/// Unicode and a program that says otherwise should have to say so.
+TextGenerator text({
+  int minLength = 0,
+  int? maxLength,
+  String? codec,
+  int? minCodepoint,
+  int? maxCodepoint,
+  List<String>? categories,
+  List<String>? excludeCategories,
+  String? includeCharacters,
+  String? excludeCharacters,
+}) {
+  _checkLengths(minLength, maxLength);
+  return TextGenerator._((
+    minLength: minLength,
+    maxLength: maxLength,
+    codec: codec,
+    minCodepoint: minCodepoint,
+    maxCodepoint: maxCodepoint,
+    categories: categories,
+    excludeCategories: excludeCategories,
+    includeCharacters: includeCharacters,
+    excludeCharacters: excludeCharacters,
+  ));
+}
+
+/// Generates single characters, drawn the way [text] draws them.
+///
+/// One character, so one code point -- which is a Dart string of one or two
+/// code units, since Dart has no character type and a `String` is what a
+/// character is. Takes the same alphabet arguments as [text] and none of its
+/// lengths.
+TextGenerator characters({
+  String? codec,
+  int? minCodepoint,
+  int? maxCodepoint,
+  List<String>? categories,
+  List<String>? excludeCategories,
+  String? includeCharacters,
+  String? excludeCharacters,
+}) => TextGenerator._((
+  minLength: 1,
+  maxLength: 1,
+  codec: codec,
+  minCodepoint: minCodepoint,
+  maxCodepoint: maxCodepoint,
+  categories: categories,
+  excludeCategories: excludeCategories,
+  includeCharacters: includeCharacters,
+  excludeCharacters: excludeCharacters,
+));
+
+/// Rejects lengths the engine would refuse, where they were written.
+void _checkLengths(int minLength, int? maxLength) {
+  if (minLength < 0) {
+    throw RangeError.value(minLength, 'minLength', 'must not be negative');
+  }
+  if (maxLength != null && minLength > maxLength) {
+    throw ArgumentError.value(
+      minLength,
+      'minLength',
+      'exceeds maxLength ($maxLength)',
+    );
+  }
+}
+
+/// Generates strings matching [pattern], in Python `re` syntax.
+///
+/// Python's syntax rather than Dart's, because the engine is what matches it.
+/// The two agree on everything ordinary and differ at the edges -- `\d` is
+/// Unicode-aware in Python by default, and the named-group spelling is
+/// `(?P<name>...)` -- so a pattern taken from Dart source is worth a glance
+/// before it is trusted here.
+///
+/// With [fullMatch] the whole string matches the pattern. Without it the
+/// match may be padded on either side, and [alphabet] says what that padding
+/// is drawn from.
+Generator<String> fromRegex(
+  String pattern, {
+  bool fullMatch = true,
+  TextGenerator? alphabet,
+}) => _RegexGenerator(pattern, fullMatch, alphabet);
+
+/// Strings matching a pattern the engine compiles.
+final class _RegexGenerator extends _NativeStringGenerator {
+  _RegexGenerator(this._pattern, this._fullMatch, this._alphabet);
+
+  final String _pattern;
+  final bool _fullMatch;
+  final TextGenerator? _alphabet;
+
+  @override
+  engine.StringGenerator buildNative() => engine.StringGenerator.regex(
+    _pattern,
+    fullMatch: _fullMatch,
+    // Built through the alphabet's own cache, so an alphabet shared between
+    // several patterns is still built once.
+    alphabet: _alphabet?._nativeGenerator,
+    session: Libhegel.instance,
+  );
+}
+
+/// Generates email addresses, per RFC 5321 and 5322.
+///
+/// A draw that would exceed the RFC's length cap rejects its own test case,
+/// arriving as the same rejection [TestCase.assume] raises. That is rare
+/// enough to ignore and regular enough not to be a surprise.
+Generator<String> emails() => _NamedStringGenerator(
+  (Libhegel session) => engine.StringGenerator.email(session: session),
+);
+
+/// Generates http and https URLs, per RFC 3986.
+Generator<String> urls() => _NamedStringGenerator(
+  (Libhegel session) => engine.StringGenerator.url(session: session),
+);
+
+/// Generates fully-qualified domain names of at most [maxLength] characters.
+Generator<String> domains({int maxLength = 255}) {
+  if (maxLength < 0) {
+    throw RangeError.value(maxLength, 'maxLength', 'must not be negative');
+  }
+  return _NamedStringGenerator(
+    (Libhegel session) =>
+        engine.StringGenerator.domain(maxLength: maxLength, session: session),
+  );
+}
+
+/// One of the engine's ready-made string shapes.
+final class _NamedStringGenerator extends _NativeStringGenerator {
+  _NamedStringGenerator(this._build);
+
+  final engine.StringGenerator Function(Libhegel session) _build;
+
+  @override
+  engine.StringGenerator buildNative() => _build(Libhegel.instance);
+}

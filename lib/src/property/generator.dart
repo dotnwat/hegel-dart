@@ -4,7 +4,10 @@ library;
 import 'package:meta/meta.dart';
 
 import '../libhegel/errors.dart';
+import '../libhegel/leaks.dart';
+import '../libhegel/session.dart';
 import '../libhegel/span.dart';
+import '../libhegel/string_generator.dart' as engine;
 import 'test_case.dart';
 
 part 'catalog.dart';

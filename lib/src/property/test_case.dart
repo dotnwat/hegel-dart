@@ -5,6 +5,7 @@ import 'package:meta/meta.dart';
 
 import '../libhegel/errors.dart';
 import '../libhegel/span.dart';
+import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
 
@@ -46,6 +47,9 @@ abstract interface class DrawContext {
     required bool excludeMin,
     required bool excludeMax,
   });
+
+  /// Draws a string described by [generator].
+  String drawString(StringGenerator generator);
 
   /// Opens a span grouping the draws made until the matching [stopSpan].
   void startSpan(SpanLabel label);
@@ -94,6 +98,10 @@ final class EngineDrawContext implements DrawContext {
     excludeMin: excludeMin,
     excludeMax: excludeMax,
   );
+
+  @override
+  String drawString(StringGenerator generator) =>
+      testCase.drawString(generator);
 
   @override
   void startSpan(SpanLabel label) => testCase.startSpan(label);

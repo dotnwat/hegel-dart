@@ -2,6 +2,7 @@
 library;
 
 import 'package:hegel/src/libhegel/span.dart';
+import 'package:hegel/src/libhegel/string_generator.dart';
 import 'package:hegel/src/property/test_case.dart';
 
 /// A [DrawContext] with nothing scripted.
@@ -37,6 +38,9 @@ abstract base class FakeDrawContext implements DrawContext {
     required bool excludeMin,
     required bool excludeMax,
   }) => _unscripted('a float');
+
+  @override
+  String drawString(StringGenerator generator) => _unscripted('a string');
 
   @override
   void startSpan(SpanLabel label) => calls.add('start ${label.value}');

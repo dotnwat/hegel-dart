@@ -79,3 +79,23 @@ bool releaseHandle(Object owner) {
   _finalizer.detach(owner);
   return true;
 }
+
+/// Stops watching [owner], which is deliberately never disposed.
+///
+/// The same detach as [releaseHandle] and the opposite claim, which is why it
+/// is spelled differently: nothing was released, and nothing will be. One
+/// caller, and it should stay that way -- the string generators the property
+/// catalog caches, which are built once per generator instance and kept for
+/// the life of the process because the ABI's free rule ("only after every
+/// draw using it has completed") has no deterministic moment in an API where
+/// generators are values.
+///
+/// Exempting them is what keeps the tracker worth reading. A report per
+/// discarded `text()` would be noise, and noise is how a diagnostic stops
+/// being read at all -- including on the day it is about a handle that
+/// mattered.
+@internal
+bool exemptHandle(Object owner) {
+  _finalizer.detach(owner);
+  return true;
+}
