@@ -29,12 +29,16 @@ void main() {
       expect(frame?.library, endsWith('codec_test.dart'));
     });
 
-    test('is this file when asked from this file', () {
-      // The synthetic traces above pin the filter; this pins that the filter
-      // is looking at the shape of trace the runtime actually produces.
+    test('is this file, named the way the key needs it named', () {
+      // Two things at once. The synthetic traces above pin the filter; this
+      // pins that the filter is looking at the shape of trace the runtime
+      // actually produces. And the path is relative rather than absolute,
+      // which is what keeps a database key the same on two machines -- an
+      // absolute one would make every checkout a different property, and
+      // nothing would ever replay anywhere but where it was found.
       expect(
         callerFrame(StackTrace.current)?.library,
-        endsWith('test/property/config_test.dart'),
+        'test/property/config_test.dart',
       );
     });
 

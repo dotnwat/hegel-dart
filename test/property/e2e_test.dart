@@ -17,6 +17,13 @@ const String fixturePath = 'test/fixture/property_fixture.dart';
 /// A fixture whose property checks how many cases it was given.
 const String environmentFixturePath = 'test/fixture/environment_fixture.dart';
 
+/// A fixture that says which value its property drew first.
+const String databaseFixturePath = 'test/fixture/database_fixture.dart';
+
+/// The first value the database fixture drew, as it printed it.
+int firstDrawnBy(ProcessResult result) =>
+    int.parse(RegExp(r'FIRST=(\d+)').firstMatch('${result.stdout}')!.group(1)!);
+
 Future<ProcessResult> runFixture(
   List<String> arguments, {
   String fixture = fixturePath,
@@ -158,4 +165,42 @@ void main() {
           'counterexamples has to do',
     );
   });
+
+  test(
+    'a counterexample comes back on the next run of the same test',
+    () async {
+      // The end of the loop the whole layer exists to close: a property fails,
+      // the counterexample is filed under a key derived from the test's own
+      // identity, and the next run of that test -- a separate process, with a
+      // separate engine, deriving the key again from scratch -- is handed it
+      // before anything is generated.
+      final directory = Directory.systemTemp.createTempSync('hegel-e2e-db');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final environment = <String, String>{'HEGEL_DATABASE': directory.path};
+
+      final searched = await runFixture(
+        <String>[],
+        fixture: databaseFixturePath,
+        environment: environment,
+      );
+      final replayed = await runFixture(
+        <String>[],
+        fixture: databaseFixturePath,
+        environment: environment,
+      );
+
+      expect(searched.exitCode, isNot(0));
+      expect(replayed.exitCode, isNot(0));
+      expect(
+        firstDrawnBy(replayed),
+        50,
+        reason: 'the second run starts on the value the first one shrank to',
+      );
+      expect(
+        firstDrawnBy(searched),
+        isNot(50),
+        reason: 'and the first run had to look for it, or this proves nothing',
+      );
+    },
+  );
 }
