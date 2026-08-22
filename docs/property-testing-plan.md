@@ -854,6 +854,19 @@ because a test framework's correctness claims are about what *users* see:
    exercised through the *public* API (catalog + combinators + stateful driver) — the check
    that the catalog table in §6.4 stays true as the engine grows.
 
+   The draw half landed with commit 12 (`test/property/catalog_audit_test.dart`) and is green:
+   twelve draws, all reached from the catalog, read off the binding layer rather than listed.
+   The span half is what remains for commit 22, and it needs a decision rather than a test:
+   **two reserved frontend labels have no generator in §6.4 and are not going to get one.**
+   FIXED_DICT is what a named-field record generator would open, and tuples cover that ground
+   under TUPLE; ENUM_VARIANT is what a Dart `enum` generator would open, and `sampledFrom`
+   covers that ground under SAMPLED_FROM — both being an index draw, neither shrinks better
+   for having its own label. So the span audit asserts the labels the catalog *claims*
+   (LIST, LIST_ELEMENT, SET, SET_ELEMENT, MAP, MAP_ENTRY, TUPLE, ONE_OF, OPTIONAL, FLAT_MAP,
+   FILTER, MAPPED, SAMPLED_FROM, STATEFUL_RULE, and the minted composite label), and names the
+   two it does not, so that a later generator for either is a deliberate addition rather than
+   a gap nobody noticed.
+
 Meta-verification: `example/echo.dart` is rewritten against the public API (and a stateful
 example added), so the examples are compile-checked documentation; `dart doc` stays gated.
 
@@ -942,7 +955,8 @@ tests; generated artifacts regenerate with their inputs.
 12. `feat: bytes, dates, times, dateTimes, uuids, ipAddresses` — type mappings per §6.4,
     plus `package:hegel/generators.dart` (§6.4), which lands here because this is the commit
     that makes a catalog worth importing on its own. Green: range properties; UUID version
-    nibble; v4/v6 branch coverage; audit extension now green for the whole primitive surface.
+    nibble; v4/v6 branch coverage; audit extension now green for the whole primitive surface
+    (the draw half of §8.9; the span half waits for the labels P4 and P6 bring).
 
 **P4 — collections**
 
@@ -981,8 +995,8 @@ tests; generated artifacts regenerate with their inputs.
 21. `docs: examples and README` — `example/echo.dart` rewritten on the public API plus a
     stateful example; README quick start (including Flutter posture per §6.9 and the
     hegeltest/naming note); dartdoc pass over the public surface.
-22. `test: property-layer audit and AOT smoke extension` — the §8.9 audit; `runProperty` in
-    the AOT smoke.
+22. `test: property-layer audit and AOT smoke extension` — the span half of the §8.9 audit
+    (the draw half landed with commit 12); `runProperty` in the AOT smoke.
 23. `chore: 0.1.0 release preparation` — CHANGELOG, pubspec description update, packaging
     dry-run re-verified, version to `0.1.0`.
 
