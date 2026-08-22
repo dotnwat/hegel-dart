@@ -1104,33 +1104,175 @@ final class _ListGenerator<T> extends Generator<List<T>> {
   final bool _unique;
 
   @override
-  List<T> generate(TestCase testCase) => testCase.span(SpanLabel.list, () {
-    // Inside the span, so the whole sequence -- the length decisions as well
-    // as the elements -- is one thing the shrinker can simplify or delete.
-    final collection = testCase.context.startCollection(
+  List<T> generate(TestCase testCase) {
+    final values = <T>[];
+    final seen = _unique ? <T>{} : null;
+    _collect(
+      testCase,
+      label: SpanLabel.list,
+      elementLabel: SpanLabel.listElement,
       minLength: _minLength,
       maxLength: _maxLength,
+      why: 'duplicate element',
+      take: () {
+        final value = _elements.generate(testCase);
+        if (seen != null && !seen.add(value)) return false;
+        values.add(value);
+        return true;
+      },
+    );
+    return values;
+  }
+}
+
+/// Generates sets of what [elements] generates.
+///
+/// A [Set] rather than a list that happens not to repeat: what comes back has
+/// the type that says so, and the property can use it as one. Uniqueness is
+/// Dart's own `==` and `hashCode` -- the same equality the returned set will
+/// go on using, which is the point of not inventing another one.
+///
+/// [minLength] and [maxLength] count distinct elements, since those are the
+/// only ones a set holds. A repeat is refused and the engine produces another
+/// element in its place, so `sets(booleans(), minLength: 3)` asks for
+/// something no set of booleans can be and spends the case discovering it:
+/// the bounds have to be ones the element type can fill.
+///
+/// Iteration order is the order the elements were generated in, [Set] being
+/// insertion-ordered in Dart, so a counterexample reads the same way twice.
+///
+/// Values shrink toward the smallest set the bounds allow.
+Generator<Set<T>> sets<T>(
+  Generator<T> elements, {
+  int minLength = 0,
+  int? maxLength,
+}) {
+  _checkLengths(minLength, maxLength);
+  return _SetGenerator<T>(elements, minLength, maxLength);
+}
+
+/// A set of one generator's values, as large as the engine decides.
+final class _SetGenerator<T> extends Generator<Set<T>> {
+  const _SetGenerator(this._elements, this._minLength, this._maxLength);
+
+  final Generator<T> _elements;
+  final int _minLength;
+  final int? _maxLength;
+
+  @override
+  Set<T> generate(TestCase testCase) {
+    final values = <T>{};
+    _collect(
+      testCase,
+      label: SpanLabel.set,
+      elementLabel: SpanLabel.setElement,
+      minLength: _minLength,
+      maxLength: _maxLength,
+      why: 'duplicate element',
+      // `add` answers whether the set took it, which is the same question the
+      // collection is asking. There is no separate record of what has been
+      // seen, because the set being built is one.
+      take: () => values.add(_elements.generate(testCase)),
+    );
+    return values;
+  }
+}
+
+/// Generates maps of what [keys] and [values] generate.
+///
+/// Each entry is one unit: its key and its value are drawn together and
+/// shrink together, so a counterexample loses whole entries rather than
+/// halves of them.
+///
+/// Keys are distinct by Dart's `==` and `hashCode`, the equality the returned
+/// map will use. A repeated key is refused and the engine produces another
+/// entry, so [minLength] and [maxLength] count entries the map actually kept
+/// -- and, as with [sets], have to be bounds the key type can fill.
+///
+/// Iteration order is the order the entries were generated in, Dart's [Map]
+/// being insertion-ordered.
+///
+/// Values shrink toward the smallest map the bounds allow.
+Generator<Map<K, V>> maps<K, V>(
+  Generator<K> keys,
+  Generator<V> values, {
+  int minLength = 0,
+  int? maxLength,
+}) {
+  _checkLengths(minLength, maxLength);
+  return _MapGenerator<K, V>(keys, values, minLength, maxLength);
+}
+
+/// A map of two generators' values, as large as the engine decides.
+final class _MapGenerator<K, V> extends Generator<Map<K, V>> {
+  const _MapGenerator(
+    this._keys,
+    this._values,
+    this._minLength,
+    this._maxLength,
+  );
+
+  final Generator<K> _keys;
+  final Generator<V> _values;
+  final int _minLength;
+  final int? _maxLength;
+
+  @override
+  Map<K, V> generate(TestCase testCase) {
+    final entries = <K, V>{};
+    _collect(
+      testCase,
+      label: SpanLabel.map,
+      elementLabel: SpanLabel.mapEntry,
+      minLength: _minLength,
+      maxLength: _maxLength,
+      why: 'duplicate key',
+      take: () {
+        final key = _keys.generate(testCase);
+        // The value is not drawn for a key the map already has. The entry is
+        // going to be refused either way, and drawing it would spend choices
+        // on a value nothing will ever hold -- choices the shrinker then has
+        // to work through. What the entry's span holds therefore depends on
+        // its key, which costs nothing: the same choices produce the same key
+        // and so the same decision, which is all a replay needs.
+        if (entries.containsKey(key)) return false;
+        entries[key] = _values.generate(testCase);
+        return true;
+      },
+    );
+    return entries;
+  }
+}
+
+/// Drives one engine-decided sequence, from inside the span it belongs to.
+///
+/// The shape every collection generator shares, in one place because the
+/// three of them agreeing with the engine matters more than any of them
+/// reading independently. The collection is started inside [label]'s span, so
+/// the length decisions belong to the value the way its elements do; [take]
+/// is called once per element the engine offers, inside a span of
+/// [elementLabel], and answers whether the element was used. One that was not
+/// is refused with [why] *after* its span has closed, the engine's protocol
+/// being that a rejection names the last element produced -- and the engine
+/// then offers another in its place, so a refusal costs nothing but a turn.
+void _collect(
+  TestCase testCase, {
+  required SpanLabel label,
+  required SpanLabel elementLabel,
+  required int minLength,
+  required int? maxLength,
+  required String why,
+  required bool Function() take,
+}) {
+  testCase.span(label, () {
+    final collection = testCase.context.startCollection(
+      minLength: minLength,
+      maxLength: maxLength,
     );
     try {
-      final values = <T>[];
-      final seen = _unique ? <T>{} : null;
       while (collection.more()) {
-        // Each element in its own span, so an element is a unit the shrinker
-        // can take out whole rather than a run of draws it has to guess the
-        // boundaries of.
-        final value = testCase.span(
-          SpanLabel.listElement,
-          () => _elements.generate(testCase),
-        );
-        // Reported after the element's span has closed, which is the engine's
-        // protocol: the element it is told about is the last one produced.
-        if (seen != null && !seen.add(value)) {
-          collection.reject('duplicate element');
-          continue;
-        }
-        values.add(value);
+        if (!testCase.span(elementLabel, take)) collection.reject(why);
       }
-      return values;
     } finally {
       // Independent of the test case and the run, so it is released here
       // rather than left to whichever of them ends first.

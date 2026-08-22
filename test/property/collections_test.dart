@@ -17,18 +17,23 @@ Libhegel openSession() {
   return session;
 }
 
-/// What one element drawn from [range] looks like on the wire.
+/// What one element under [label], drawn from [ranges], looks like on the wire.
 ///
 /// Spelled out once rather than at every call, because the point of the pins
 /// below is the shape around the elements -- where the collection is started,
 /// where each element's span opens and closes, where the handle is released
-/// -- and repeating the middle of it would bury that.
-List<String> element(String range) => <String>[
+/// -- and repeating the middle of it would bury that. A map entry passes two
+/// ranges, since its key and its value are drawn inside the one span.
+List<String> element(SpanLabel label, List<String> ranges) => <String>[
   'more true',
-  'start ${SpanLabel.listElement.value}',
-  'draw $range',
+  'start ${label.value}',
+  for (final String range in ranges) 'draw $range',
   'stop',
 ];
+
+/// [element] for the list generator, whose pins came first.
+List<String> listElement(String range) =>
+    element(SpanLabel.listElement, <String>[range]);
 
 void main() {
   group('lists', () {
@@ -59,8 +64,8 @@ void main() {
       expect(context.calls, <String>[
         'start ${SpanLabel.list.value}',
         'collection 0..4',
-        ...element('0..9'),
-        ...element('0..9'),
+        ...listElement('0..9'),
+        ...listElement('0..9'),
         'more false',
         'free',
         'stop',
@@ -130,10 +135,10 @@ void main() {
         expect(context.calls, <String>[
           'start ${SpanLabel.list.value}',
           'collection 0..*',
-          ...element('0..9'),
-          ...element('0..9'),
+          ...listElement('0..9'),
+          ...listElement('0..9'),
           'reject duplicate element',
-          ...element('0..9'),
+          ...listElement('0..9'),
           'more false',
           'free',
           'stop',
@@ -270,6 +275,283 @@ void main() {
             ),
           ),
         );
+      });
+    });
+  });
+
+  group('sets', () {
+    test('draws as many distinct elements as the engine asks for', () {
+      final context = ScriptedContext(
+        <int>[1, 2],
+        more: <bool>[true, true, false],
+      );
+
+      final value = TestCase(context).draw(sets(integers(min: 0, max: 9)));
+
+      expect(value, <int>{1, 2});
+    });
+
+    test('builds the set in the shape the engine expects', () {
+      final context = ScriptedContext(
+        <int>[1, 2],
+        more: <bool>[true, true, false],
+      );
+
+      TestCase(context).draw(sets(integers(min: 0, max: 9), maxLength: 4));
+
+      expect(context.calls, <String>[
+        'start ${SpanLabel.set.value}',
+        'collection 0..4',
+        ...element(SpanLabel.setElement, <String>['0..9']),
+        ...element(SpanLabel.setElement, <String>['0..9']),
+        'more false',
+        'free',
+        'stop',
+      ]);
+    });
+
+    test('refuses a repeat once its own span has closed', () {
+      final context = ScriptedContext(
+        <int>[3, 3, 5],
+        more: <bool>[true, true, true, false],
+      );
+
+      final value = TestCase(context).draw(sets(integers(min: 0, max: 9)));
+
+      expect(value, <int>{3, 5});
+      expect(context.calls, <String>[
+        'start ${SpanLabel.set.value}',
+        'collection 0..*',
+        ...element(SpanLabel.setElement, <String>['0..9']),
+        ...element(SpanLabel.setElement, <String>['0..9']),
+        'reject duplicate element',
+        ...element(SpanLabel.setElement, <String>['0..9']),
+        'more false',
+        'free',
+        'stop',
+      ]);
+    });
+
+    test('reports the set, not the elements it is made of', () {
+      final testCase = TestCase(
+        ScriptedContext(<int>[4, 5], more: <bool>[true, true, false]),
+      );
+
+      testCase.draw(sets(integers(min: 0, max: 9)), name: 'xs');
+
+      expect(testCase.draws, hasLength(1));
+      expect(testCase.draws.single.name, 'xs');
+      expect(testCase.draws.single.value, <int>{4, 5});
+    });
+
+    group('bounds', () {
+      test('refuse a negative minimum where it was written', () {
+        expect(
+          () => sets(integers(), minLength: -1),
+          throwsA(isA<RangeError>()),
+        );
+      });
+
+      test('refuse a minimum above the maximum', () {
+        expect(
+          () => sets(integers(), minLength: 3, maxLength: 2),
+          throwsA(isA<ArgumentError>()),
+        );
+      });
+    });
+
+    group('over a run', () {
+      test('draws inside the requested size bounds', () {
+        final values = drawEveryCase(
+          openSession(),
+          sets(integers(min: 0, max: 50), minLength: 1, maxLength: 4),
+        );
+
+        expect(values, isNotEmpty);
+        expect(
+          values.map((Set<int> value) => value.length),
+          everyElement(allOf(greaterThanOrEqualTo(1), lessThanOrEqualTo(4))),
+        );
+        expect(
+          values.map((Set<int> value) => value.length).toSet(),
+          hasLength(greaterThan(1)),
+        );
+      });
+
+      test('reaches its minimum out of a narrow element range', () {
+        // Three of the four booleans-and-a-bit are not available: two
+        // distinct elements out of two possible ones means every case has to
+        // refuse its way past a repeat, and a refusal that counted against
+        // the size would leave a set that cannot reach two.
+        final values = drawEveryCase(
+          openSession(),
+          sets(booleans(), minLength: 2, maxLength: 2),
+        );
+
+        expect(values, isNotEmpty);
+        expect(values, everyElement(hasLength(2)));
+      });
+
+      test('terminates when the size is unbounded', () {
+        final values = drawEveryCase(
+          openSession(),
+          sets(integers(min: 0, max: 50)),
+        );
+
+        expect(values, isNotEmpty);
+      });
+    });
+  });
+
+  group('maps', () {
+    test('draws the key and the value of each entry', () {
+      final context = ScriptedContext(
+        <int>[1, 10, 2, 20],
+        more: <bool>[true, true, false],
+      );
+
+      final value = TestCase(context)
+          .draw(maps(integers(min: 0, max: 9), integers(min: 0, max: 99)));
+
+      expect(value, <int, int>{1: 10, 2: 20});
+    });
+
+    test('builds each entry as one span, key and value inside it', () {
+      final context = ScriptedContext(
+        <int>[1, 10, 2, 20],
+        more: <bool>[true, true, false],
+      );
+
+      TestCase(context).draw(
+        maps(integers(min: 0, max: 9), integers(min: 0, max: 99), maxLength: 3),
+      );
+
+      // Both draws inside the one entry span, so an entry is a unit the
+      // shrinker takes out whole: a key deleted without its value would be a
+      // map with half an entry in it.
+      expect(context.calls, <String>[
+        'start ${SpanLabel.map.value}',
+        'collection 0..3',
+        ...element(SpanLabel.mapEntry, <String>['0..9', '0..99']),
+        ...element(SpanLabel.mapEntry, <String>['0..9', '0..99']),
+        'more false',
+        'free',
+        'stop',
+      ]);
+    });
+
+    test('refuses a repeated key without drawing a value for it', () {
+      final context = ScriptedContext(
+        <int>[1, 10, 1, 2, 20],
+        more: <bool>[true, true, true, false],
+      );
+
+      final value = TestCase(context)
+          .draw(maps(integers(min: 0, max: 9), integers(min: 0, max: 99)));
+
+      expect(value, <int, int>{1: 10, 2: 20});
+      // The refused entry drew its key and stopped there: a value drawn for
+      // an entry nothing will hold is entropy the shrinker has to work
+      // through for no one.
+      expect(context.calls, <String>[
+        'start ${SpanLabel.map.value}',
+        'collection 0..*',
+        ...element(SpanLabel.mapEntry, <String>['0..9', '0..99']),
+        ...element(SpanLabel.mapEntry, <String>['0..9']),
+        'reject duplicate key',
+        ...element(SpanLabel.mapEntry, <String>['0..9', '0..99']),
+        'more false',
+        'free',
+        'stop',
+      ]);
+    });
+
+    test('keeps the first value a repeated key was given', () {
+      final context = ScriptedContext(
+        <int>[1, 10, 1, 2, 20],
+        more: <bool>[true, true, true, false],
+      );
+
+      final value = TestCase(context)
+          .draw(maps(integers(min: 0, max: 9), integers(min: 0, max: 99)));
+
+      // The refusal is not an overwrite: what the map holds for 1 is the
+      // value drawn with it, not one drawn later for a key that was turned
+      // away.
+      expect(value[1], 10);
+    });
+
+    test('reports the map, not the entries it is made of', () {
+      final testCase = TestCase(
+        ScriptedContext(<int>[4, 40], more: <bool>[true, false]),
+      );
+
+      testCase.draw(
+        maps(integers(min: 0, max: 9), integers(min: 0, max: 99)),
+        name: 'xs',
+      );
+
+      expect(testCase.draws, hasLength(1));
+      expect(testCase.draws.single.name, 'xs');
+      expect(testCase.draws.single.value, <int, int>{4: 40});
+    });
+
+    group('bounds', () {
+      test('refuse a negative minimum where it was written', () {
+        expect(
+          () => maps(integers(), integers(), minLength: -1),
+          throwsA(isA<RangeError>()),
+        );
+      });
+
+      test('refuse a minimum above the maximum', () {
+        expect(
+          () => maps(integers(), integers(), minLength: 3, maxLength: 2),
+          throwsA(isA<ArgumentError>()),
+        );
+      });
+    });
+
+    group('over a run', () {
+      test('draws inside the requested size bounds, with distinct keys', () {
+        final values = drawEveryCase(
+          openSession(),
+          maps(
+            integers(min: 0, max: 50),
+            integers(min: 0, max: 50),
+            minLength: 1,
+            maxLength: 4,
+          ),
+        );
+
+        expect(values, isNotEmpty);
+        expect(
+          values.map((Map<int, int> value) => value.length),
+          everyElement(allOf(greaterThanOrEqualTo(1), lessThanOrEqualTo(4))),
+        );
+        expect(
+          values.map((Map<int, int> value) => value.length).toSet(),
+          hasLength(greaterThan(1)),
+        );
+      });
+
+      test('reaches its minimum out of a narrow key range', () {
+        final values = drawEveryCase(
+          openSession(),
+          maps(booleans(), integers(min: 0, max: 50), minLength: 2),
+        );
+
+        expect(values, isNotEmpty);
+        expect(values, everyElement(hasLength(greaterThanOrEqualTo(2))));
+      });
+
+      test('terminates when the size is unbounded', () {
+        final values = drawEveryCase(
+          openSession(),
+          maps(integers(min: 0, max: 50), booleans()),
+        );
+
+        expect(values, isNotEmpty);
       });
     });
   });

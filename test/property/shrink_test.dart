@@ -261,6 +261,59 @@ void main() {
     });
   });
 
+  group('a set generator', () {
+    test('shrinks to the smallest distinct elements that fail', () async {
+      // Two elements out of a set cannot both be zero, so the smallest pair
+      // is `{0, 1}`. A shrunk case holding a repeat would mean the
+      // uniqueness the type promises held only while generating.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          sets(integers(min: 0, max: 1000)),
+          name: 'value',
+        );
+        if (value.length >= 2) throw StateError('$value is too big');
+      });
+
+      expect(report, contains('value = {0, 1}'));
+    });
+  });
+
+  group('a map generator', () {
+    test('shrinks to the smallest map that still fails', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          maps(integers(min: 0, max: 1000), integers(min: 0, max: 1000)),
+          name: 'value',
+        );
+        if (value.length >= 2) throw StateError('$value is too big');
+      });
+
+      expect(report, contains('value = {0: 0, 1: 0}'));
+    });
+
+    test('keeps a key with its value while it deletes the rest', () async {
+      // What the entry span is for. The failure is about one entry, so every
+      // other entry has to go and the survivor has to shrink as a pair: a
+      // shrinker that could move a key without its value would report a map
+      // whose own key and value contradict the failure that was reported.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          maps(
+            integers(min: 0, max: 1000),
+            integers(min: 0, max: 1000),
+            maxLength: 8,
+          ),
+          name: 'value',
+        );
+        if (value.entries.any((MapEntry<int, int> e) => e.value > e.key)) {
+          throw StateError('$value has an entry that is out of order');
+        }
+      });
+
+      expect(report, contains('value = {0: 1}'));
+    });
+  });
+
   group('a recursive generator', () {
     test('shrinks to the smallest tree that still fails', () async {
       // The pin that most needs its spans. A tree is drawn from dozens of
