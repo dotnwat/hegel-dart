@@ -1,10 +1,17 @@
 /// The generator algebra: what a property draws from.
 library;
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:meta/meta.dart';
 
 import '../libhegel/errors.dart';
+import '../libhegel/leaks.dart';
+import '../libhegel/session.dart';
 import '../libhegel/span.dart';
+import '../libhegel/string_generator.dart' as engine;
+import '../libhegel/test_case.dart' as engine;
 import 'test_case.dart';
 
 part 'catalog.dart';

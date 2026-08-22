@@ -68,6 +68,16 @@ void main() {
     expect(drawn.any((Uint8List b) => b.isEmpty), isTrue);
   });
 
+  test('leaves the length to the engine when there is no upper bound', () {
+    final drawn = drawAll((TestCase c) => c.drawBytes(minLength: 0));
+
+    expect(drawn, isNotEmpty);
+    // Unbounded is the engine's own sizing rather than an invitation to
+    // allocate: the same thing a string generator means by it.
+    expect(drawn.map((Uint8List b) => b.length), everyElement(lessThan(1000)));
+    expect(drawn.map((Uint8List b) => b.length).toSet().length, greaterThan(1));
+  });
+
   test('handles a fixed length', () {
     final drawn = drawAll(
       (TestCase c) => c.drawBytes(minLength: 4, maxLength: 4),

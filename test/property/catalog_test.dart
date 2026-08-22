@@ -302,4 +302,387 @@ void main() {
       );
     });
   });
+
+  group('booleans', () {
+    test('produces both answers across a run', () {
+      final values = drawEveryCase(openSession(), booleans());
+
+      expect(values, contains(isTrue));
+      expect(values, contains(isFalse));
+    });
+
+    test('leans the way its probability says', () {
+      final always = drawEveryCase(openSession(), booleans(probability: 1));
+      final never = drawEveryCase(openSession(), booleans(probability: 0));
+
+      expect(always, everyElement(isTrue));
+      expect(never, everyElement(isFalse));
+    });
+
+    test('passes the probability through as given', () {
+      final context = ScriptedContext(<int>[], booleans: <bool>[true]);
+
+      TestCase(context).draw(booleans(probability: 0.25));
+
+      expect(context.calls, <String>['draw boolean 0.25']);
+    });
+
+    test('refuses a probability that is not one, where it was written', () {
+      for (final bad in <double>[-0.1, 1.5, double.nan]) {
+        expect(
+          () => booleans(probability: bad),
+          throwsA(
+            isA<RangeError>().having(
+              (RangeError error) => error.message,
+              'message',
+              contains('must be in 0..1'),
+            ),
+          ),
+          reason: '$bad is not a probability',
+        );
+      }
+    });
+  });
+
+  group('doubles', () {
+    test('draws inside the requested bounds', () {
+      final values = drawEveryCase(openSession(), doubles(min: -2.5, max: 7.5));
+
+      expect(values, isNotEmpty);
+      expect(values, everyElement(inInclusiveRange(-2.5, 7.5)));
+    });
+
+    test('produces NaN when nothing was bounded', () {
+      final values = drawEveryCase(openSession(), doubles(), testCases: 200);
+
+      expect(
+        values.where((double value) => value.isNaN),
+        isNotEmpty,
+        reason:
+            'an unbounded double includes NaN, and a run of two hundred '
+            'that never saw one would mean the default resolved the other way',
+      );
+    });
+
+    test('keeps NaN out once a bound is given', () {
+      final values = drawEveryCase(
+        openSession(),
+        doubles(min: 0),
+        testCases: 200,
+      );
+
+      expect(values, everyElement(isNot(isNaN)));
+      expect(values, everyElement(greaterThanOrEqualTo(0)));
+    });
+
+    test('keeps NaN out when asked, even unbounded', () {
+      final values = drawEveryCase(
+        openSession(),
+        doubles(allowNan: false),
+        testCases: 200,
+      );
+
+      expect(values, everyElement(isNot(isNaN)));
+    });
+
+    test('resolves the defaults the way Hypothesis does', () {
+      // The one thing a run can only answer statistically: what an unset
+      // allowNan and allowInfinity became.
+      String constraintFor(Generator<double> generator) {
+        final context = ScriptedContext(<int>[], floats: <double>[0]);
+        TestCase(context).draw(generator);
+        return context.calls.single;
+      }
+
+      expect(
+        constraintFor(doubles()),
+        contains('nan=true inf=true'),
+        reason: 'both ends open: nothing to violate',
+      );
+      expect(
+        constraintFor(doubles(min: 0)),
+        contains('nan=false inf=true'),
+        reason:
+            'NaN would walk through the bound it compares false against, '
+            'but the open end can still reach infinity',
+      );
+      expect(
+        constraintFor(doubles(min: 0, max: 1)),
+        contains('nan=false inf=false'),
+      );
+      expect(
+        constraintFor(doubles(allowNan: true, allowInfinity: false)),
+        contains('nan=true inf=false'),
+        reason: 'said explicitly, so nothing is resolved',
+      );
+    });
+
+    test('passes its exclusions through', () {
+      final context = ScriptedContext(<int>[], floats: <double>[0.5]);
+
+      TestCase(context)
+          .draw(doubles(min: 0, max: 1, excludeMin: true, excludeMax: true));
+
+      expect(context.calls.single, contains('exclude=true/true'));
+    });
+
+    test('holds an excluded bound open over a run', () {
+      final values = drawEveryCase(
+        openSession(),
+        doubles(min: 0, max: 1, excludeMin: true),
+        testCases: 200,
+      );
+
+      expect(values, isNotEmpty);
+      expect(values, everyElement(greaterThan(0)));
+      expect(values, everyElement(lessThanOrEqualTo(1)));
+    });
+
+    test('refuses a range only signed zero tells apart', () {
+      // -0.0 == 0.0, so `>` reads this as a range in order and the engine
+      // meets it as an internal error. It is an inverted range: the engine
+      // orders the two zeros apart even though Dart's operators do not.
+      expect(
+        () => doubles(min: 0.0, max: -0.0),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('exceeds max'),
+          ),
+        ),
+      );
+      expect(doubles(min: -0.0, max: 0.0), isA<Generator<double>>());
+    });
+
+    test('refuses an exclusion that empties a single-value range', () {
+      expect(
+        () => doubles(min: 1, max: 1, excludeMin: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('leaves nothing to draw'),
+          ),
+        ),
+      );
+      expect(
+        () => doubles(
+          min: double.infinity,
+          max: double.infinity,
+          excludeMax: true,
+        ),
+        throwsArgumentError,
+        reason:
+            'the engine answers this one with the value it was told to '
+            'exclude, which is worse than refusing it',
+      );
+      expect(doubles(min: 1, max: 1), isA<Generator<double>>());
+    });
+
+    test('refuses NaN and infinity where no bound could hold them', () {
+      // The engine refuses both, on every case rather than at the line that
+      // asked, so they are refused here instead.
+      expect(
+        () => doubles(min: 0, max: 1, allowNan: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('needs both bounds open'),
+          ),
+        ),
+      );
+      expect(() => doubles(min: 0, allowNan: true), throwsArgumentError);
+      expect(
+        () => doubles(min: 0, max: 1, allowInfinity: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('needs an open bound'),
+          ),
+        ),
+      );
+    });
+
+    test('allows what the bounds can still hold', () {
+      // The other side of the same rule: turning either off is always
+      // allowed, and turning them on is allowed where a bound is open.
+      expect(doubles(allowNan: true), isA<Generator<double>>());
+      expect(
+        doubles(min: 0, max: 1, allowNan: false),
+        isA<Generator<double>>(),
+      );
+      expect(doubles(min: 0, allowInfinity: true), isA<Generator<double>>());
+      expect(
+        doubles(min: 0, max: 1, allowInfinity: false),
+        isA<Generator<double>>(),
+      );
+    });
+
+    test('refuses a bound that is not a number', () {
+      expect(
+        () => doubles(min: double.nan),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('is not a number'),
+          ),
+        ),
+      );
+      expect(() => doubles(max: double.nan), throwsArgumentError);
+    });
+
+    test('refuses an inverted range where it was written', () {
+      expect(
+        () => doubles(min: 1, max: 0),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('exceeds max'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('bigIntegers', () {
+    test('draws inside the requested bounds', () {
+      final low = BigInt.parse('-100000000000000000000000000');
+      final high = BigInt.parse('100000000000000000000000000');
+      final values = drawEveryCase(
+        openSession(),
+        bigIntegers(min: low, max: high),
+      );
+
+      expect(values, isNotEmpty);
+      expect(
+        values,
+        everyElement(
+          predicate<BigInt>((BigInt v) => v >= low && v <= high, 'in range'),
+        ),
+      );
+    });
+
+    test('reaches past what a machine word holds when unbounded', () {
+      final values = drawEveryCase(openSession(), bigIntegers());
+
+      // The claim that matters: an unbounded big integer is wide, rather
+      // than an int64 draw wearing a BigInt.
+      final int64Max = BigInt.parse('9223372036854775807');
+      expect(
+        values,
+        contains(predicate<BigInt>((BigInt v) => v.abs() > int64Max, 'wide')),
+      );
+    });
+
+    test('takes the narrow path when both bounds fit a machine word', () {
+      // The engine has two integer draws and picks by width; bounds this
+      // small go down the fixed-width one. Proven at L2 already, and
+      // re-proven here because the public generator is what chooses the
+      // bounds it is proven with.
+      final values = drawEveryCase(
+        openSession(),
+        bigIntegers(min: BigInt.zero, max: BigInt.from(10)),
+      );
+
+      expect(values, isNotEmpty);
+      expect(
+        values,
+        everyElement(
+          predicate<BigInt>(
+            (BigInt v) => v >= BigInt.zero && v <= BigInt.from(10),
+            'in range',
+          ),
+        ),
+      );
+    });
+
+    test('passes its bounds through as given', () {
+      final context = ScriptedContext(
+        <int>[],
+        bigIntegers: <BigInt>[BigInt.zero],
+      );
+
+      TestCase(context)
+          .draw(bigIntegers(min: BigInt.from(-5), max: BigInt.from(5)));
+
+      expect(context.calls, <String>['draw big -5..5']);
+    });
+
+    test('refuses an inverted range where it was written', () {
+      expect(
+        () => bigIntegers(min: BigInt.two, max: BigInt.one),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('exceeds max'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('durations', () {
+    test('draws inside the requested bounds', () {
+      final values = drawEveryCase(
+        openSession(),
+        durations(
+          min: const Duration(seconds: 1),
+          max: const Duration(minutes: 1),
+        ),
+      );
+
+      expect(values, isNotEmpty);
+      expect(
+        values,
+        everyElement(
+          predicate<Duration>(
+            (Duration d) =>
+                d >= const Duration(seconds: 1) &&
+                d <= const Duration(minutes: 1),
+            'in range',
+          ),
+        ),
+      );
+    });
+
+    test('reaches both directions when unbounded', () {
+      final values = drawEveryCase(openSession(), durations());
+
+      expect(values, contains(greaterThan(Duration.zero)));
+      expect(values, contains(lessThan(Duration.zero)));
+    });
+
+    test('draws whole microseconds, over the whole microsecond range', () {
+      final context = ScriptedContext(<int>[1500]);
+
+      final value = TestCase(context).draw(durations());
+
+      expect(value, const Duration(microseconds: 1500));
+      expect(context.calls, <String>[
+        'draw ${-0x8000000000000000}..${0x7fffffffffffffff}',
+      ]);
+    });
+
+    test('refuses an inverted range where it was written', () {
+      expect(
+        () => durations(
+          min: const Duration(days: 2),
+          max: const Duration(days: 1),
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('exceeds max'),
+          ),
+        ),
+      );
+    });
+  });
 }

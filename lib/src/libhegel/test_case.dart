@@ -791,12 +791,16 @@ final class TestCase implements ffi.Finalizable {
   }
 
   /// Draws a byte string whose length is in [minLength] to [maxLength].
-  Uint8List drawBytes({required int minLength, required int maxLength}) {
+  ///
+  /// A null [maxLength] leaves the length unbounded, which is the same thing
+  /// it means to a string generator: the engine sizes the draw itself rather
+  /// than growing it without limit.
+  Uint8List drawBytes({required int minLength, int? maxLength}) {
     return _guarded(() {
       if (minLength < 0) {
         throw RangeError.value(minLength, 'minLength', 'must not be negative');
       }
-      if (minLength > maxLength) {
+      if (maxLength != null && minLength > maxLength) {
         throw ArgumentError.value(
           minLength,
           'minLength',
@@ -811,7 +815,7 @@ final class TestCase implements ffi.Finalizable {
             session.context,
             handle,
             minLength,
-            maxLength,
+            sizeOrUnbounded(maxLength, 'maxLength'),
             out,
           ),
           'hegel_generate_bytes',
