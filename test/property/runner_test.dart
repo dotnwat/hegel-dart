@@ -91,6 +91,38 @@ void main() {
       );
     });
 
+    test('prints what the shrunk case drew and what the body said', () async {
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            final value = testCase.draw(
+              integers(min: 0, max: 1000),
+              name: 'value',
+            );
+            testCase.note('about to check $value');
+            if (value > 50) throw StateError('$value is too big');
+          },
+          settings: runSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        said.single,
+        allOf(
+          contains('value = $shrunkAboveFifty'),
+          contains('about to check $shrunkAboveFifty'),
+          contains('example database'),
+        ),
+        reason:
+            'one block rather than a line at a time, and only the '
+            'minimal case: every other case the property tried is noise',
+      );
+    });
+
     test('rethrows it with the stack it was raised from', () async {
       StackTrace? caught;
       try {
@@ -264,12 +296,18 @@ void main() {
     // and it is the one the caller gets.
     test('reports the failure the discovering case captured', () async {
       var bodies = 0;
+      final said = <String>[];
 
       await expectLater(
-        runProperty((TestCase testCase) {
-          bodies++;
-          throw StateError('case $bodies: ${testCase.draw(integers())}');
-        }, settings: runSettings(mode: Mode.singleTestCase)),
+        runProperty(
+          (TestCase testCase) {
+            bodies++;
+            final value = testCase.draw(integers(), name: 'value');
+            throw StateError('case $bodies: $value');
+          },
+          settings: runSettings(mode: Mode.singleTestCase),
+          onDiagnostic: said.add,
+        ),
         throwsA(
           isA<StateError>().having(
             (StateError error) => error.message,
@@ -277,6 +315,13 @@ void main() {
             startsWith('case 1:'),
           ),
         ),
+      );
+      expect(
+        said.single,
+        contains('value = '),
+        reason:
+            'the discovering case is the only account there is, so what '
+            'it drew is what gets printed',
       );
       expect(
         bodies,

@@ -2,8 +2,11 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/property/reporting.dart';
+import 'package:hegel/src/property/test_case.dart';
 import 'package:stack_trace/stack_trace.dart';
 import 'package:test/test.dart';
 
@@ -104,6 +107,154 @@ void main() {
       expect(
         originOf(StateError('boom'), trace),
         'StateError at package:app/a.dart',
+      );
+    });
+  });
+
+  group('a rendered value', () {
+    test('quotes a string, so an empty one looks like something', () {
+      expect(repr('hello'), "'hello'");
+      expect(repr(''), "''");
+      expect(repr('   '), "'   '");
+    });
+
+    test('makes whitespace and control characters visible', () {
+      // The whole reason for not using toString: a counterexample that is a
+      // newline and a counterexample that is a space print identically
+      // otherwise, and telling them apart is the entire task.
+      expect(repr('a\nb\tc\r'), r"'a\nb\tc\r'");
+      expect(repr("it's"), r"'it\'s'");
+      expect(repr(r'back\slash'), r"'back\\slash'");
+      expect(repr('\u0000'), r"'\u{0}'");
+      expect(repr('\u007f'), r"'\u{7f}'");
+    });
+
+    test('leaves printable text alone, whatever alphabet it is in', () {
+      expect(repr('naïve 日本語 🎉'), "'naïve 日本語 🎉'");
+    });
+
+    test('escapes a stranded surrogate rather than printing nothing', () {
+      expect(repr(String.fromCharCode(0xd800)), r"'\u{d800}'");
+    });
+
+    test('renders bytes as bytes', () {
+      expect(repr(Uint8List.fromList(<int>[0, 255, 58])), 'bytes(00ff3a)');
+      expect(repr(Uint8List(0)), 'bytes()');
+    });
+
+    test('goes through collections, so their contents are visible too', () {
+      expect(repr(<int>[1, 2]), '[1, 2]');
+      expect(repr(<String>['a', '']), "['a', '']");
+      expect(repr(<String>{'a'}), "{'a'}");
+      expect(repr(<String, int>{'k': 1}), "{'k': 1}");
+      expect(
+        repr(<List<String>>[
+          <String>['a'],
+        ]),
+        "[['a']]",
+      );
+      expect(repr(<int>[]), '[]');
+    });
+
+    test('renders anything else the way it renders itself', () {
+      expect(repr(null), 'null');
+      expect(repr(42), '42');
+      expect(repr(1.5), '1.5');
+      expect(repr(double.nan), 'NaN');
+      expect(repr(true), 'true');
+      expect(repr((1, 'a')), '(1, a)');
+    });
+
+    test('does not chase a value that contains itself', () {
+      final looping = <Object>[];
+      looping.add(looping);
+
+      expect(repr(looping), '[...]');
+    });
+
+    test('renders a value that merely repeats, both times', () {
+      // Identity, not equality: two equal lists are two values, and hiding
+      // the second would hide a counterexample where both being equal is
+      // the point.
+      final twice = <String>['a'];
+
+      expect(repr(<List<String>>[twice, twice]), "[['a'], ['a']]");
+    });
+  });
+
+  group('a failure report', () {
+    test('names each draw, falling back to its position', () {
+      expect(
+        renderFailure(
+          draws: <Drawn>[
+            (name: 'message', value: <int>[0, 128]),
+            (name: null, value: 'x'),
+          ],
+          notes: <String>[],
+          hints: <String>[],
+        ),
+        "message = [0, 128]\ndraw_2 = 'x'",
+      );
+    });
+
+    test('keeps the notes and the hints in sections of their own', () {
+      expect(
+        renderFailure(
+          draws: <Drawn>[(name: 'n', value: 1)],
+          notes: <String>['before', 'after'],
+          hints: <String>['Seed: 7.'],
+        ),
+        'n = 1\n\nbefore\nafter\n\nSeed: 7.',
+      );
+    });
+
+    test('leaves out a section there is nothing to put in', () {
+      expect(
+        renderFailure(
+          draws: <Drawn>[],
+          notes: <String>[],
+          hints: <String>['Seed: 7.'],
+        ),
+        'Seed: 7.',
+      );
+    });
+  });
+
+  group('a reproduction hint', () {
+    test('says what the engine does when nobody chose', () {
+      expect(reproductionHints(const Settings()).single, contains('under CI'));
+    });
+
+    test('says nothing was kept when the database is off', () {
+      expect(
+        reproductionHints(const Settings(database: Database.disabled)).single,
+        contains('not kept'),
+      );
+    });
+
+    test('names the default location when that is what was chosen', () {
+      expect(
+        reproductionHints(
+          const Settings(database: Database.standard, databaseKey: 'k'),
+        ).single,
+        contains('.hegel/examples'),
+      );
+    });
+
+    test('does not repeat a path back to whoever wrote it', () {
+      expect(
+        reproductionHints(
+          const Settings(database: Database.at('/tmp/x'), databaseKey: 'k'),
+        ).single,
+        allOf(contains('example database'), isNot(contains('/tmp/x'))),
+      );
+    });
+
+    test('gives the seed only when there was one to give', () {
+      expect(reproductionHints(const Settings(seed: 7)), contains('Seed: 7.'));
+      expect(
+        reproductionHints(const Settings()),
+        isNot(contains(startsWith('Seed'))),
       );
     });
   });

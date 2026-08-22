@@ -47,7 +47,18 @@ void main() {
       expect(testCase.draw(integers(min: 0, max: 9)), 7);
       expect(testCase.draw(integers(min: 0, max: 9)), 3);
 
-      expect(testCase.draws, <int>[7, 3]);
+      expect(testCase.draws, <Drawn>[
+        (name: null, value: 7),
+        (name: null, value: 3),
+      ]);
+    });
+
+    test('records the name the body gave a draw', () {
+      final testCase = TestCase(ScriptedContext(<int>[7]));
+
+      testCase.draw(integers(min: 0, max: 9), name: 'width');
+
+      expect(testCase.draws, <Drawn>[(name: 'width', value: 7)]);
     });
 
     test('passes the generator its bounds', () {
@@ -73,7 +84,7 @@ void main() {
       // The list is not among them either: only what the body drew is, and
       // the body drew the list through a generator that had not been written
       // yet at this point in the package's history.
-      expect(testCase.draws, <int>[3]);
+      expect(testCase.draws, <Drawn>[(name: null, value: 3)]);
       expect(context.calls, <String>[
         'start ${SpanLabel.list.value}',
         'draw 0..9',
@@ -110,7 +121,7 @@ void main() {
         'stop',
         'draw 0..9',
       ]);
-      expect(testCase.draws, <int>[4]);
+      expect(testCase.draws, <Drawn>[(name: null, value: 4)]);
     });
 
     test('records notes as the text they were at the time', () {

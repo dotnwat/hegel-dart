@@ -112,9 +112,12 @@ Future<void> runProperty(
 
 /// How one test case ended, in the terms the engine asks for.
 final class _Outcome {
-  _Outcome.completed() : error = null, stack = null;
+  _Outcome.completed(this.testCase) : error = null, stack = null;
 
-  _Outcome.threw(this.error, this.stack);
+  _Outcome.threw(this.testCase, this.error, this.stack);
+
+  /// The case the body ran against, holding what it drew and noted.
+  final TestCase testCase;
 
   /// What ended the case, or null if the body simply finished.
   final Object? error;
@@ -164,9 +167,11 @@ Future<_Outcome> _runCase(
     () async {
       try {
         await body(testCase);
-        if (!ended.isCompleted) ended.complete(_Outcome.completed());
+        if (!ended.isCompleted) ended.complete(_Outcome.completed(testCase));
       } on Object catch (error, stack) {
-        if (!ended.isCompleted) ended.complete(_Outcome.threw(error, stack));
+        if (!ended.isCompleted) {
+          ended.complete(_Outcome.threw(testCase, error, stack));
+        }
       }
     },
     (Object error, StackTrace stack) {
@@ -175,7 +180,7 @@ Future<_Outcome> _runCase(
         diagnostic('$stack');
         return;
       }
-      ended.complete(_Outcome.threw(error, stack));
+      ended.complete(_Outcome.threw(testCase, error, stack));
     },
   );
   return ended.future;
@@ -217,6 +222,7 @@ Future<Never> _report(
           'says how',
         );
       }
+      _describe(discovered.testCase, settings, diagnostic);
       Error.throwWithStackTrace(discovered.error!, discovered.stack!);
     }
 
@@ -238,11 +244,31 @@ Future<Never> _report(
       replayCase.dispose();
     }
 
+    // Before raising, so that package:test has the counterexample in hand by
+    // the time it prints the failure.
+    _describe(outcome.testCase, settings, diagnostic);
     raiseReplayed(origin: origin, error: outcome.error, stack: outcome.stack);
   } finally {
     failure.dispose();
   }
 }
+
+/// Reports what [testCase] drew and noted, and how to get it back.
+///
+/// Only ever the minimal case: the one the engine shrank to and the runner
+/// replayed, or -- where nothing was stored to replay -- the one that
+/// discovered the failure. Every other case the property tried is noise.
+void _describe(
+  TestCase testCase,
+  Settings settings,
+  void Function(String line) diagnostic,
+) => diagnostic(
+  renderFailure(
+    draws: testCase.draws,
+    notes: testCase.notes,
+    hints: reproductionHints(settings),
+  ),
+);
 
 /// Raises whatever replaying the counterexample for [origin] amounts to.
 ///

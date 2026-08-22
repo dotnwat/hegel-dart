@@ -24,6 +24,8 @@ void main() {
   }, settings: fixtureSettings);
 
   property('every drawn value is below fifty', (TestCase tc) {
-    expect(tc.draw(integers(min: 0, max: 1000)), lessThan(50));
+    final value = tc.draw(integers(min: 0, max: 1000), name: 'value');
+    tc.note('about to check $value');
+    expect(value, lessThan(50));
   }, settings: fixtureSettings);
 }

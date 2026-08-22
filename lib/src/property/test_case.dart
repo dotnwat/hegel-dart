@@ -8,6 +8,13 @@ import '../libhegel/span.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
 
+/// One value the body drew, as the report will show it.
+///
+/// The name is the one the body gave the draw, or null when it gave none, in
+/// which case the report falls back to the draw's position.
+@internal
+typedef Drawn = ({String? name, Object? value});
+
 /// The engine, as a generator needs to see it.
 ///
 /// A [TestCase] holds one of these rather than an engine handle, so that a
@@ -74,7 +81,7 @@ final class TestCase {
   /// place the answer is already known.
   int _depth = 0;
 
-  final List<Object?> _draws = <Object?>[];
+  final List<Drawn> _draws = <Drawn>[];
   final List<String> _notes = <String>[];
 
   /// The seam generators draw from.
@@ -85,7 +92,7 @@ final class TestCase {
   ///
   /// Composed parts are not in here; see [_depth].
   @internal
-  List<Object?> get draws => _draws;
+  List<Drawn> get draws => _draws;
 
   /// What the body recorded with [note], in order.
   @internal
@@ -97,9 +104,15 @@ final class TestCase {
   /// or while shrinking, the same call returns whatever the stored choice
   /// sequence says. A property that branches on a drawn value therefore
   /// replays exactly as it ran.
-  T draw<T>(Generator<T> generator) {
+  ///
+  /// [name] labels the value in the failure report. Worth giving: a report
+  /// that says `message = [0, 128]` is read at a glance, and one that says
+  /// `draw_2 = [0, 128]` has to be counted out against the body. Dart has no
+  /// macro that could take the name from the variable being assigned, which
+  /// is how the Rust frontend does it, so the name is asked for instead.
+  T draw<T>(Generator<T> generator, {String? name}) {
     final value = generator.generate(this);
-    if (_depth == 0) _draws.add(value);
+    if (_depth == 0) _draws.add((name: name, value: value));
     return value;
   }
 

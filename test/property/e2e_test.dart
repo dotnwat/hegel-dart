@@ -57,6 +57,23 @@ void main() {
     expect(result.stdout, contains('Actual: <50>'));
   });
 
+  test('a failing property shows the counterexample and its notes', () async {
+    final result = await runFixture(<String>['-N', 'below fifty']);
+
+    // package:test prints what was buffered after the error rather than
+    // before it, so this is the order a reader sees rather than the order
+    // the plan drew.
+    expect(result.stdout, contains('value = 50'));
+    expect(result.stdout, contains('about to check 50'));
+    expect(
+      result.stdout,
+      contains('The example database is off'),
+      reason:
+          'the fixture turns it off, and a reader who does not know that '
+          'would wait for a replay that never comes',
+    );
+  });
+
   test('the reporter points at the line the property was written on', () async {
     final result = await runFixture(<String>[
       '-N',

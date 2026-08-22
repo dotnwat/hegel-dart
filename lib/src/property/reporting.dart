@@ -1,7 +1,12 @@
 /// What a failure is called, and how it reaches the reader.
 library;
 
+import 'dart:typed_data';
+
 import 'package:stack_trace/stack_trace.dart';
+
+import '../libhegel/settings.dart';
+import 'test_case.dart';
 
 /// Packages whose frames are never where a property went wrong.
 ///
@@ -44,3 +49,148 @@ String originOf(Object error, StackTrace stack) {
   // is better than grouping everything together.
   return '${error.runtimeType}';
 }
+
+/// [value] as a failure report should show it.
+///
+/// Not `toString`: a counterexample is read to work out what was special
+/// about it, and `toString` hides exactly the things that usually are. The
+/// empty string and a string of three spaces print identically; a tab and a
+/// newline print as whitespace; a byte string prints as a list of decimal
+/// numbers. Everything here exists to make one of those visible.
+String repr(Object? value) => _repr(value, Set<Object>.identity());
+
+String _repr(Object? value, Set<Object> enclosing) {
+  if (value == null) return 'null';
+  if (value is String) return _quoted(value);
+  if (value is Uint8List) {
+    final digits = StringBuffer();
+    for (final byte in value) {
+      digits.write(byte.toRadixString(16).padLeft(2, '0'));
+    }
+    // Not a list of numbers: bytes are read as bytes, and the empty case has
+    // to look like something rather than like nothing.
+    return 'bytes($digits)';
+  }
+  if (value is Map<Object?, Object?>) {
+    return _whileInside(
+      value,
+      enclosing,
+      () =>
+          '{${<String>[for (final MapEntry<Object?, Object?> entry in value.entries) '${_repr(entry.key, enclosing)}: ${_repr(entry.value, enclosing)}'].join(', ')}}',
+    );
+  }
+  if (value is Set<Object?>) {
+    return _whileInside(
+      value,
+      enclosing,
+      () => '{${_elements(value, enclosing)}}',
+    );
+  }
+  if (value is Iterable<Object?>) {
+    return _whileInside(
+      value,
+      enclosing,
+      () => '[${_elements(value, enclosing)}]',
+    );
+  }
+  return '$value';
+}
+
+String _elements(Iterable<Object?> values, Set<Object> enclosing) =>
+    values.map((Object? element) => _repr(element, enclosing)).join(', ');
+
+/// Renders [value] with [render], unless it is already being rendered.
+///
+/// A value that contains itself is a thing a `map` can build, and the
+/// reporter is the last place that should fall over. Identity rather than
+/// equality: two equal lists are not the same list, and rendering the second
+/// as an ellipsis would hide a genuine repetition.
+String _whileInside(
+  Object value,
+  Set<Object> enclosing,
+  String Function() render,
+) {
+  if (!enclosing.add(value)) return '...';
+  try {
+    return render();
+  } finally {
+    enclosing.remove(value);
+  }
+}
+
+/// [value] in quotes, with everything invisible made visible.
+String _quoted(String value) {
+  final out = StringBuffer("'");
+  for (final rune in value.runes) {
+    switch (rune) {
+      case 0x27:
+        out.write(r"\'");
+      case 0x5c:
+        out.write(r'\\');
+      case 0x0a:
+        out.write(r'\n');
+      case 0x0d:
+        out.write(r'\r');
+      case 0x09:
+        out.write(r'\t');
+      default:
+        // Control characters, and surrogates a map() could have stranded:
+        // written through, they would come out as replacement characters or
+        // as nothing at all, and a counterexample nobody can see is no use.
+        if (rune < 0x20 ||
+            (rune >= 0x7f && rune <= 0x9f) ||
+            (rune >= 0xd800 && rune <= 0xdfff)) {
+          out.write('\\u{${rune.toRadixString(16)}}');
+        } else {
+          out.writeCharCode(rune);
+        }
+    }
+  }
+  return (out..write("'")).toString();
+}
+
+/// The block a failing property prints under its error.
+///
+/// Everything about the counterexample that is not the error itself: what it
+/// drew, what the body said about it, and how to get it back. Only ever the
+/// minimal case -- the one the engine shrank to and the runner replayed -- so
+/// what is printed is what someone has to reason about, rather than every
+/// case the property tried.
+String renderFailure({
+  required List<Drawn> draws,
+  required List<String> notes,
+  required List<String> hints,
+}) {
+  final sections = <String>[
+    if (draws.isNotEmpty)
+      <String>[
+        for (final (int index, Drawn drawn) in draws.indexed)
+          '${drawn.name ?? 'draw_${index + 1}'} = ${repr(drawn.value)}',
+      ].join('\n'),
+    if (notes.isNotEmpty) notes.join('\n'),
+    if (hints.isNotEmpty) hints.join('\n'),
+  ];
+  return sections.join('\n\n');
+}
+
+/// What to tell the reader about getting this failure back.
+///
+/// The engine decides for itself whether to keep counterexamples when the
+/// settings do not say -- on locally, off under CI -- and there is no call
+/// that asks it what it decided. So the line about a database nobody chose
+/// says what the engine does rather than claiming to know what it did.
+List<String> reproductionHints(Settings settings) => <String>[
+  switch (settings.database) {
+    null =>
+      'Kept in the example database and replayed first next time, unless the '
+          'engine turned persistence off (it does under CI).',
+    Database.disabled =>
+      'The example database is off, so this counterexample was not kept.',
+    Database.standard =>
+      'Kept in .hegel/examples and replayed first next time.',
+    // The path is the caller's own, so there is nothing to tell them about
+    // it that they did not just write.
+    _ => 'Kept in the example database and replayed first next time.',
+  },
+  if (settings.seed case final seed?) 'Seed: $seed.',
+];
