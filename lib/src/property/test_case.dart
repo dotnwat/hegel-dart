@@ -632,15 +632,31 @@ final class TestCase {
   void target(double value, {String label = 'target'}) =>
       _context.target(value, label: label);
 
-  /// Takes back the last thing [note] recorded.
+  /// How much of this case's report has been written so far.
   ///
-  /// For a step that was announced and then did not happen: the driver names
-  /// a rule before running it, because the name is what makes a failure
-  /// inside it readable, and a rule that turns itself down leaves a line
-  /// about a step that no one took.
+  /// Paired with [rollBackTo], for work that is announced before anyone knows
+  /// whether it will happen: the stateful driver names a rule before running
+  /// it, because the name is what makes a failure inside it readable, and a
+  /// rule that then turns itself down has to leave nothing behind.
+  ///
+  /// A position rather than a count of things to undo, because a rule that
+  /// declines may have said and drawn anything at all first. Undoing one note
+  /// takes back whatever the body said last, which is the wrong line, and
+  /// takes back nothing it drew -- leaving the parameters of a step that
+  /// never happened among the values the counterexample is made of.
   @internal
-  void undoNote() {
-    if (_notes.isNotEmpty) _notes.removeLast();
+  ({int draws, int notes}) get mark =>
+      (draws: _draws.length, notes: _notes.length);
+
+  /// Drops everything recorded since [mark].
+  @internal
+  void rollBackTo(({int draws, int notes}) mark) {
+    if (_draws.length > mark.draws) {
+      _draws.removeRange(mark.draws, _draws.length);
+    }
+    if (_notes.length > mark.notes) {
+      _notes.removeRange(mark.notes, _notes.length);
+    }
   }
 
   /// Takes what [worker] drew and noted into this case, tagged with [tag].

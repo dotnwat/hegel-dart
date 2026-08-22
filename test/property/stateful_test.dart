@@ -341,6 +341,56 @@ void main() {
     });
   });
 
+  group('a rule that turns itself down, having already said something', () {
+    test('leaves nothing of itself in the script', () async {
+      final context = _ScriptedMachine(<List<int>>[
+        <int>[0, 1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('pop', (TestCase tc) {
+            // A note before the precondition is an ordinary thing to write:
+            // it is how a rule says what it was about to do.
+            tc.note('about to pop');
+            tc.assume(false);
+          }),
+          Rule('push', (TestCase tc) {}),
+        ]),
+      );
+
+      // Both lines go, not just the last one. Undoing a single note pops
+      // whatever the body said last and leaves the announcement behind --
+      // which reads as a step that ran and then said nothing.
+      expect(testCase.notes, <String>['Step 1: push']);
+    });
+
+    test('takes its drawn parameters with it', () async {
+      final context = _ScriptedMachine(<List<int>>[
+        <int>[0, 1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('pop', (TestCase tc) {
+            tc.draw(just(7), name: 'by');
+            tc.assume(false);
+          }),
+          Rule('push', (TestCase tc) {}),
+        ]),
+      );
+
+      // A parameter of a step that never happened is not a value the
+      // counterexample was built from, and reporting it as one sends the
+      // reader looking for a step that is not in the script.
+      expect(testCase.draws, isEmpty);
+    });
+  });
+
   group('invariants', () {
     test('are checked before the first rule and after every round', () async {
       final context = _ScriptedMachine(<List<int>>[
@@ -462,9 +512,11 @@ void main() {
 
       // In worker order rather than in the order they finished, because the
       // order they finished in is the thing that will not be the same twice.
+      // Each worker numbers its own script, which is what the tag beside the
+      // number says the line belongs to.
       expect(testCase.notes, <String>[
         '[worker 0] Step 1: push',
-        '[worker 1] Step 2: pop',
+        '[worker 1] Step 1: pop',
       ]);
     });
 
@@ -611,7 +663,7 @@ void main() {
       // The round that ends badly is the one whose script the reader most
       // needs, so a worker's log is taken across however the round ended.
       expect(testCase.notes, contains('[worker 0] Step 1: worked'));
-      expect(testCase.notes, contains('[worker 1] Step 2: failed'));
+      expect(testCase.notes, contains('[worker 1] Step 1: failed'));
     });
   });
 
@@ -669,6 +721,51 @@ void main() {
         expect(released, 1);
       },
     );
+  });
+
+  group('step numbers under several workers', () {
+    test('are never handed out twice', () async {
+      // Worker 0 announces a step, worker 1 announces the next, and then
+      // worker 0's rule turns itself down. A counter shared between them
+      // cannot be wound back at that point: the number it would give up has
+      // already been passed, and the next step takes one that is spoken for.
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0, 1],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('declines', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+            tc.assume(false);
+          }),
+          Rule('runs', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+          }),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      // Read per worker, since that is whose script it is once the notes
+      // carry a tag saying so. Each one has to run from one without gaps: a
+      // script that opens at step two is a reader looking for a step one
+      // that was taken by somebody else.
+      for (final String tag in <String>['[worker 0]', '[worker 1]']) {
+        final mine = <int>[
+          for (final String note in testCase.notes)
+            if (note.startsWith('$tag Step '))
+              int.parse(note.split('Step ')[1].split(':')[0]),
+        ];
+        expect(mine, isNotEmpty, reason: '$tag took no step');
+        expect(mine, <int>[
+          for (var n = 1; n <= mine.length; n++) n,
+        ], reason: '$tag numbered its steps $mine');
+      }
+    });
   });
 
   group('a planted bug', () {

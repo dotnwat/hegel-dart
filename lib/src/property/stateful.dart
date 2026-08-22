@@ -205,14 +205,13 @@ Future<void> runStateful(
   try {
     final workers = _workersFor(testCase, driver.concurrency);
     try {
-      final steps = _Steps();
       // Before the first rule as well as after each round: a machine whose
       // invariants do not hold of its initial state is broken before it
       // starts, and finding that out after three steps names the wrong step.
       await _check(testCase, invariants);
       while (driver.nextGroup() != null) {
         try {
-          await _round(testCase, driver, rules, workers, steps);
+          await _round(testCase, driver, rules, workers);
         } finally {
           // In a finally, because the round that ends badly is the one whose
           // script the reader most needs: a worker's log left behind on the
@@ -250,11 +249,19 @@ final class _Worker {
 
   /// Gives the handle back. A no-op for the worker that is the root case.
   final void Function() release;
-}
 
-/// The step counter, shared so that a script numbers steps once.
-final class _Steps {
-  int taken = 0;
+  /// How many steps this worker has taken, across every round of the case.
+  ///
+  /// Its own rather than shared with the other workers. A shared counter can
+  /// be wound back only by whoever took the last number, and a rule that
+  /// declines is exactly the case where somebody else may have taken one
+  /// since -- so winding it back hands the same number out twice. Nothing was
+  /// bought by sharing it either: the notes are taken across in worker order
+  /// at the join point, so a number that meant "third step of the case" was
+  /// already being read out of order by the time anyone saw it. Per worker it
+  /// means "third step of this worker's script", which is what the tag beside
+  /// it already says the line is.
+  int steps = 0;
 }
 
 /// The workers for a machine the engine wants run [concurrency] wide.
@@ -310,16 +317,15 @@ Future<void> _round(
   DrawMachine driver,
   List<Rule> rules,
   List<_Worker> workers,
-  _Steps steps,
 ) async {
   if (workers.length == 1) {
-    return _turn(driver, rules, workers.single, steps);
+    return _turn(driver, rules, workers.single);
   }
   // Every worker is run to its own end rather than to the first failure.
   // The engine gave out a round and expects it back, and a worker abandoned
   // mid-round would leave the machine waiting on rules nobody will pull.
   final endings = await Future.wait(<Future<_Ending?>>[
-    for (final _Worker worker in workers) _ending(driver, rules, worker, steps),
+    for (final _Worker worker in workers) _ending(driver, rules, worker),
   ]);
   final raised = endings.nonNulls.toList();
   if (raised.isEmpty) return;
@@ -344,10 +350,9 @@ Future<_Ending?> _ending(
   DrawMachine driver,
   List<Rule> rules,
   _Worker worker,
-  _Steps steps,
 ) async {
   try {
-    await _turn(driver, rules, worker, steps);
+    await _turn(driver, rules, worker);
     return null;
   } on Object catch (error, stack) {
     return (worker: worker.index, error: error, stack: stack);
@@ -377,12 +382,7 @@ int _rank(Object error) => switch (error) {
 };
 
 /// Pulls rules for one worker until its round is over.
-Future<void> _turn(
-  DrawMachine driver,
-  List<Rule> rules,
-  _Worker worker,
-  _Steps steps,
-) async {
+Future<void> _turn(DrawMachine driver, List<Rule> rules, _Worker worker) async {
   final testCase = worker.testCase;
   while (true) {
     final index = driver.nextRule(worker.context, worker.index);
@@ -392,8 +392,11 @@ Future<void> _turn(
       driver.ruleRejected(worker.context, worker.index);
       continue;
     }
-    steps.taken++;
-    testCase.note('Step ${steps.taken}: ${rule.name}');
+    // Taken before the rule is announced, so that everything the rule goes
+    // on to say and draw sits after it and comes back off together.
+    final before = testCase.mark;
+    worker.steps++;
+    testCase.note('Step ${worker.steps}: ${rule.name}');
     try {
       await testCase.step(SpanLabel.statefulRule, () => rule.body(testCase));
     } on AssumptionFailed {
@@ -402,10 +405,10 @@ Future<void> _turn(
       // raised is held against the whole case, so there is nothing left to
       // run and this has to go on unwinding.
       if (worker.context.isAborted) rethrow;
-      // Not counted as a step, because it did not take one: the note named a
-      // rule that then declined to run.
-      testCase.undoNote();
-      steps.taken--;
+      // Not counted as a step, because it did not take one -- and neither is
+      // anything it said or drew on the way to finding that out.
+      testCase.rollBackTo(before);
+      worker.steps--;
       driver.ruleRejected(worker.context, worker.index);
     }
   }
