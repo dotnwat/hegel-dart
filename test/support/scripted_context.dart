@@ -82,6 +82,9 @@ abstract base class FakeDrawContext implements DrawContext {
   bool get isAborted => false;
 
   @override
+  DrawPool startPool() => _unscripted('a pool');
+
+  @override
   DrawMachine startStateMachine({
     required List<String> ruleNames,
     required List<String> invariantNames,

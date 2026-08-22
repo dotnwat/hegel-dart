@@ -8,6 +8,7 @@ import 'package:meta/meta.dart';
 
 import '../libhegel/collection.dart' as engine;
 import '../libhegel/errors.dart';
+import '../libhegel/pool.dart' as engine;
 import '../libhegel/settings.dart';
 import '../libhegel/span.dart';
 import '../libhegel/state_machine.dart' as engine;
@@ -40,6 +41,31 @@ abstract interface class DrawCollection {
   void reject(String why);
 
   /// Releases the collection. Idempotent.
+  void dispose();
+}
+
+/// The engine's set of variable identifiers, as a pool sees it.
+///
+/// The engine owns *which* variable a draw picks and how a failing case
+/// shrinks over the set; what a variable is stands outside it entirely. So
+/// the identifiers are all that crosses this seam, and the mapping from one
+/// to a value belongs to whoever asked for it.
+///
+/// Operations take the context to draw from rather than binding one, unlike a
+/// collection: a pool may be driven from any handle of its test-case family,
+/// and once workers have their own clones that is the whole point of it.
+@internal
+abstract interface class DrawPool {
+  /// Adds a fresh identifier, drawn from [from], and returns it.
+  int add(DrawContext from);
+
+  /// Chooses an identifier already in the pool, drawn from [from].
+  ///
+  /// With [consume] the chosen identifier is removed. Raises
+  /// [AssumptionFailed] when the pool is empty.
+  int draw(DrawContext from, {required bool consume});
+
+  /// Releases the pool. Idempotent.
   void dispose();
 }
 
@@ -152,6 +178,9 @@ abstract interface class DrawContext {
   /// body raised has not and means only that this step was a bad idea.
   bool get isAborted;
 
+  /// Starts a set of variable identifiers the engine can choose among.
+  DrawPool startPool();
+
   /// Registers a state machine and lets the engine sequence its rules.
   ///
   /// [invariantNames] is registration only: the engine validates them and
@@ -254,6 +283,9 @@ final class EngineDrawContext implements DrawContext {
   bool get isAborted => testCase.family.abort != null;
 
   @override
+  DrawPool startPool() => _EnginePool(testCase.newPool());
+
+  @override
   DrawMachine startStateMachine({
     required List<String> ruleNames,
     required List<String> invariantNames,
@@ -304,6 +336,34 @@ final class _EngineCollection implements DrawCollection {
 
   @override
   void dispose() => _collection.dispose();
+}
+
+/// A [DrawPool] backed by a real engine pool.
+final class _EnginePool implements DrawPool {
+  _EnginePool(this._pool);
+
+  final engine.Pool _pool;
+
+  @override
+  int add(DrawContext from) => _pool.add(_caseOf(from));
+
+  @override
+  int draw(DrawContext from, {required bool consume}) =>
+      _pool.draw(_caseOf(from), consume: consume);
+
+  @override
+  void dispose() => _pool.dispose();
+
+  /// The engine case behind [from].
+  ///
+  /// A pool belongs to a test-case family and only a handle of that family
+  /// can drive it, so a pool the engine made is only ever driven by a context
+  /// over the engine -- the root case that created it, or a worker's clone of
+  /// that same case. Anything else is a pool handed to a context that could
+  /// not have made it, which is a mistake in this package rather than
+  /// something a caller can cause.
+  engine.TestCase _caseOf(DrawContext from) =>
+      (from as EngineDrawContext).testCase;
 }
 
 /// A [DrawMachine] backed by a real engine state machine.
@@ -357,6 +417,7 @@ final class TestCase {
 
   final List<Drawn> _draws = <Drawn>[];
   final List<String> _notes = <String>[];
+  final List<void Function()> _releases = <void Function()>[];
 
   /// The seam generators draw from.
   @internal
@@ -371,6 +432,30 @@ final class TestCase {
   /// What the body recorded with [note], in order.
   @internal
   List<String> get notes => _notes;
+
+  /// Runs [release] when this case ends, whatever ends it.
+  ///
+  /// For the engine handles whose life is the case rather than the draw. A
+  /// collection belongs to the one list it is building and is released where
+  /// it was made; a pool outlives every draw taken from it and would
+  /// otherwise be released nowhere, since a property body has no place to put
+  /// a `finally` that the runner does not already own.
+  @internal
+  void onRelease(void Function() release) => _releases.add(release);
+
+  /// Releases what this case handed out. Idempotent.
+  ///
+  /// Called by the runner when the case is over. Everything is released even
+  /// if one of them throws, because a handle left behind is a handle left
+  /// behind whatever the reason.
+  @internal
+  void release() {
+    final pending = List<void Function()>.of(_releases);
+    _releases.clear();
+    for (final void Function() release in pending) {
+      release();
+    }
+  }
 
   /// Draws a value from [generator].
   ///

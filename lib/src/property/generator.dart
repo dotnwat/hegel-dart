@@ -17,6 +17,7 @@ import 'test_case.dart';
 part 'catalog.dart';
 part 'combinators.dart';
 part 'composite.dart';
+part 'pool.dart';
 
 /// A recipe for values of type [T].
 ///

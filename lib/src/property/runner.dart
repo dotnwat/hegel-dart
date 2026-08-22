@@ -97,14 +97,18 @@ Future<void> runProperty(
     while (true) {
       final engineCase = run.nextTestCase();
       if (engineCase == null) break;
+      final testCase = TestCase(EngineDrawContext(engineCase));
       try {
-        final testCase = TestCase(EngineDrawContext(engineCase));
         final outcome = await _runCase(testCase, body);
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
         engineCase.markComplete(outcome.status, origin: outcome.origin);
       } finally {
+        // Before the engine case, since what the body took out lives on its
+        // family: a pool released after the case it belongs to would be
+        // released against a handle that is already gone.
+        testCase.release();
         engineCase.dispose();
       }
     }
@@ -323,12 +327,14 @@ Future<Never> _report(
         blob,
         session: session,
       );
+      final minimal = TestCase(EngineDrawContext(replayCase));
       final _Outcome outcome;
       try {
         // Not marked complete: a case from a blob belongs to no run, so there
         // is nothing waiting to be told how it ended.
-        outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
+        outcome = await _runCase(minimal, body);
       } finally {
+        minimal.release();
         replayCase.dispose();
       }
 
@@ -474,10 +480,12 @@ Future<void> _reproduce(
       'the blob given to reproduce could not be read: ${error.message}',
     );
   }
+  final replayed = TestCase(EngineDrawContext(replayCase));
   final _Outcome outcome;
   try {
-    outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
+    outcome = await _runCase(replayed, body);
   } finally {
+    replayed.release();
     replayCase.dispose();
   }
 
