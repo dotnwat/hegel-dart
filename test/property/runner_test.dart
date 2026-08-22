@@ -252,29 +252,88 @@ void main() {
       );
     });
 
-    test('reports work that failed after its case was over', () async {
-      final said = <String>[];
+    test('registers work that failed after its case was over', () async {
+      // The case has been given its verdict, so this cannot be one -- but a
+      // future that failed is not nothing, and the buffer a passing test
+      // throws away is not where it belongs. registerException is where
+      // package:test puts a stray error in any ordinary test; here it is
+      // caught by a zone of this test's own so that proving it happens does
+      // not require failing.
+      final late = <Object>[];
 
-      await runProperty(
-        (TestCase testCase) {
-          testCase.draw(integers(min: 0, max: 10));
-          unawaited(
-            Future<void>.delayed(
-              const Duration(milliseconds: 5),
-              () => throw StateError('late'),
-            ),
-          );
-        },
-        settings: runSettings(testCases: 2),
-        onDiagnostic: said.add,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await runZonedGuarded(() async {
+        await runProperty(
+          (TestCase testCase) {
+            testCase.draw(integers(min: 0, max: 10));
+            unawaited(
+              Future<void>.delayed(
+                const Duration(milliseconds: 5),
+                () => throw StateError('late'),
+              ),
+            );
+          },
+          settings: runSettings(testCases: 2),
+          onDiagnostic: (_) {},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }, (Object error, StackTrace stack) => late.add(error));
 
+      expect(late, isNotEmpty);
       expect(
-        said,
-        contains(contains('leaked async work escaped its test case')),
+        late.first,
+        isA<PropertyError>().having(
+          (PropertyError error) => error.message,
+          'message',
+          allOf(
+            contains('leaked async work escaped its test case'),
+            contains('late'),
+          ),
+        ),
       );
-      expect(said, contains(contains('late')));
+    });
+
+    test('registers a failure that arrives after a stray error ended the '
+        'case', () async {
+      // Both are real. The first to arrive is the verdict, because the case
+      // has to end for the run to go on; keeping only that one and dropping
+      // the other silently is what would make the report a lie.
+      final late = <Object>[];
+
+      await runZonedGuarded(() async {
+        await expectLater(
+          runProperty(
+            (TestCase testCase) async {
+              testCase.draw(integers(min: 0, max: 10));
+              unawaited(Future<void>(() => throw StateError('the stray one')));
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+              throw StateError('the real one');
+            },
+            settings: runSettings(testCases: 2),
+            onDiagnostic: (_) {},
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (StateError error) => error.message,
+              'message',
+              'the stray one',
+            ),
+          ),
+        );
+        // The body resumes after the case it belonged to is over, so its
+        // throw lands after runProperty has already returned.
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }, (Object error, StackTrace stack) => late.add(error));
+
+      expect(late, isNotEmpty);
+      expect(
+        late.map((Object error) => '$error'),
+        everyElement(
+          // Exactly once, not wrapped again by the guard it was reported
+          // from: the explanation is the outermost thing in the message.
+          'PropertyError: the body failed after its case had ended: '
+          'Bad state: the real one',
+        ),
+      );
     });
   });
 

@@ -94,7 +94,7 @@ Future<void> runProperty(
       if (engineCase == null) break;
       try {
         final testCase = TestCase(EngineDrawContext(engineCase));
-        final outcome = await _runCase(testCase, body, diagnostic);
+        final outcome = await _runCase(testCase, body);
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered ??= outcome;
         }
@@ -177,30 +177,48 @@ final class _Outcome {
 /// ended. The zone catches the first one and makes it the case's outcome
 /// instead, which is what the body would have seen had it awaited.
 ///
-/// One that arrives after the case is over is reported rather than
-/// attributed. It cannot become this case's verdict -- that has been given --
-/// and it must not become the next one's.
+/// The first error wins, whichever way it arrives, because the case has to
+/// end for the run to go on. Whatever comes second is registered rather than
+/// dropped: a stray error and the property's own failure are both real, and
+/// silently keeping one of them would report the wrong bug at the wrong
+/// place -- the origin is derived from whichever error is kept, so the engine
+/// would then shrink toward a site the property never failed at.
 Future<_Outcome> _runCase(
   TestCase testCase,
   FutureOr<void> Function(TestCase) body,
-  void Function(String line) diagnostic,
 ) {
   final ended = Completer<_Outcome>();
+  // The zone the run is happening in, kept because a late error has to be
+  // reported *outside* the guard below. Reported from inside it, the report
+  // is itself an uncaught error in the guarded zone, and comes back around
+  // wrapped in a second explanation of the same thing.
+  final host = Zone.current;
   runZonedGuarded(
     () async {
       try {
         await body(testCase);
         if (!ended.isCompleted) ended.complete(_Outcome.completed(testCase));
       } on Object catch (error, stack) {
-        if (!ended.isCompleted) {
+        if (ended.isCompleted) {
+          _registerLate(
+            host,
+            'the body failed after its case had ended',
+            error,
+            stack,
+          );
+        } else {
           ended.complete(_Outcome.threw(testCase, error, stack));
         }
       }
     },
     (Object error, StackTrace stack) {
       if (ended.isCompleted) {
-        diagnostic('leaked async work escaped its test case: $error');
-        diagnostic('$stack');
+        _registerLate(
+          host,
+          'leaked async work escaped its test case',
+          error,
+          stack,
+        );
         return;
       }
       ended.complete(_Outcome.threw(testCase, error, stack));
@@ -208,6 +226,22 @@ Future<_Outcome> _runCase(
   );
   return ended.future;
 }
+
+/// Reports an error that arrived too late to be its case's verdict.
+///
+/// The case has one outcome and the engine has already been told it, so this
+/// cannot become one -- and it must not become the next case's either. It
+/// goes where package:test sends a stray error in any ordinary test:
+/// attributed to the running test, loud enough to fail it, and never
+/// silently buffered. Outside a test it reaches whatever zone the caller is
+/// running in, which is the same promise by a different name.
+///
+/// The error's own stack is kept, since that is what says where the work
+/// that escaped came from; the message says why it could not be the verdict.
+/// Reported in [host] -- the zone the run itself is in -- so that it does not
+/// arrive back at the guard it came from.
+void _registerLate(Zone host, String what, Object error, StackTrace stack) =>
+    host.run(() => registerException(PropertyError('$what: $error'), stack));
 
 /// Replays the minimal counterexample and raises what it did.
 ///
@@ -246,7 +280,10 @@ Future<Never> _report(
           'says how',
         );
       }
-      _describe(discovered.testCase, settings, diagnostic);
+      // Nothing was stored, so nothing will be replayed, and saying
+      // otherwise would send the reader back to a database that has never
+      // heard of this failure.
+      _describe(discovered.testCase, settings, diagnostic, stored: false);
       Error.throwWithStackTrace(discovered.error!, discovered.stack!);
     }
 
@@ -259,11 +296,7 @@ Future<Never> _report(
     try {
       // Not marked complete: a case from a blob belongs to no run, so there
       // is nothing waiting to be told how it ended.
-      outcome = await _runCase(
-        TestCase(EngineDrawContext(replayCase)),
-        body,
-        diagnostic,
-      );
+      outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
     } finally {
       replayCase.dispose();
     }
@@ -294,11 +327,17 @@ void _describe(
   void Function(String line) diagnostic, {
   String? blob,
   bool? printBlob,
+  bool stored = true,
 }) => diagnostic(
   renderFailure(
     draws: testCase.draws,
     notes: testCase.notes,
-    hints: reproductionHints(settings, blob: blob, printBlob: printBlob),
+    hints: reproductionHints(
+      settings,
+      blob: blob,
+      printBlob: printBlob,
+      stored: stored,
+    ),
   ),
 );
 
@@ -322,20 +361,28 @@ Future<void> _reproduce(
     throw PropertyError(
       'the blob given to reproduce could not be read: ${error.message}',
     );
+  } on ArgumentError catch (error) {
+    // Refused while marshalling, before the engine sees it: an interior NUL
+    // or a stranded surrogate, which is what a blob copied out of a
+    // truncated or re-encoded log looks like. The same complaint as above
+    // from the reader's point of view, so it is reported the same way.
+    throw PropertyError(
+      'the blob given to reproduce could not be read: ${error.message}',
+    );
   }
   final _Outcome outcome;
   try {
-    outcome = await _runCase(
-      TestCase(EngineDrawContext(replayCase)),
-      body,
-      diagnostic,
-    );
+    outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
   } finally {
     replayCase.dispose();
   }
 
-  // Whatever happened: someone who asked for one case asked to see it.
-  _describe(outcome.testCase, settings, diagnostic);
+  // There was no run, so there is no database line to give: nothing was
+  // stored, and whoever passed a blob has the blob already. What is left is
+  // what the case drew and what the body said about it -- which the default
+  // sink still only shows if the replay failed, since a case that held is
+  // not news.
+  _describe(outcome.testCase, settings, diagnostic, stored: false);
   switch (outcome.error) {
     case null:
       return;

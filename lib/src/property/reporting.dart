@@ -72,7 +72,24 @@ String originOf(Object error, StackTrace stack) {
 /// numbers. Everything here exists to make one of those visible.
 String repr(Object? value) => _repr(value, Set<Object>.identity());
 
+/// [value] rendered, or a placeholder if rendering it is what went wrong.
+///
+/// The report is written before the property's failure is raised, so an
+/// exception from here does not merely spoil a line -- it replaces the
+/// failure the reader was about to be shown with one from the reporter. A
+/// drawn value with a throwing `toString`, a mock with a missing stub, a
+/// model with an uninitialised field: none of those are worth losing a
+/// counterexample over, and every one of them is something a generator can
+/// hand back.
 String _repr(Object? value, Set<Object> enclosing) {
+  try {
+    return _rendered(value, enclosing);
+  } on Object {
+    return '<unprintable ${value.runtimeType}>';
+  }
+}
+
+String _rendered(Object? value, Set<Object> enclosing) {
   if (value == null) return 'null';
   if (value is String) return _quoted(value);
   if (value is Uint8List) {
@@ -196,19 +213,25 @@ List<String> reproductionHints(
   Settings settings, {
   String? blob,
   bool? printBlob,
+  bool stored = true,
 }) => <String>[
-  switch (settings.database) {
-    null =>
-      'Kept in the example database and replayed first next time, unless the '
-          'engine turned persistence off (it does under CI).',
-    Database.disabled =>
-      'The example database is off, so this counterexample was not kept.',
-    Database.standard =>
-      'Kept in .hegel/examples and replayed first next time.',
-    // The path is the caller's own, so there is nothing to tell them about
-    // it that they did not just write.
-    _ => 'Kept in the example database and replayed first next time.',
-  },
+  // [stored] is false where there was no run to keep anything -- a single
+  // test case, a nondeterministic one, a bare replay from a blob. Telling
+  // the reader their counterexample is waiting for them would send them to a
+  // database that has never heard of it.
+  if (stored)
+    switch (settings.database) {
+      null =>
+        'Kept in the example database and replayed first next time, unless the '
+            'engine turned persistence off (it does under CI).',
+      Database.disabled =>
+        'The example database is off, so this counterexample was not kept.',
+      Database.standard =>
+        'Kept in .hegel/examples and replayed first next time.',
+      // The path is the caller's own, so there is nothing to tell them
+      // about it that they did not just write.
+      _ => 'Kept in the example database and replayed first next time.',
+    },
   if (blob != null && (printBlob ?? !_keepsCounterexamples(settings.database)))
     "To reproduce anywhere: property(..., reproduce: '$blob')",
   if (settings.seed case final seed?) 'Seed: $seed.',

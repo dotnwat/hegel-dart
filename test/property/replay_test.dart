@@ -101,6 +101,14 @@ void main() {
         isNot(contains('reproduce:')),
         reason: 'whoever passed the blob has it already',
       );
+      expect(
+        said.single,
+        isNot(contains('example database')),
+        reason:
+            'there was no run, so nothing was stored and nothing will be '
+            'replayed; saying otherwise sends the reader to a database that '
+            'has never heard of this failure',
+      );
     });
 
     test('returns when the case it replays no longer fails', () async {
@@ -173,6 +181,29 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('reports a blob that never reaches the engine the same way', () async {
+      // A NUL or a stranded surrogate is refused while marshalling, which is
+      // what a blob copied out of a truncated or re-encoded log looks like.
+      // The reader cannot tell those apart from a corrupt one and should not
+      // have to.
+      for (final broken in <String>['A\u0000B', '\ud800']) {
+        await expectLater(
+          runProperty(
+            failsAboveFifty(<int>[]),
+            settings: settingsFor(),
+            reproduce: broken,
+          ),
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              contains('could not be read'),
+            ),
+          ),
+        );
+      }
     });
   });
 

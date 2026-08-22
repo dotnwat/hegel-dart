@@ -18,6 +18,14 @@ StackTrace traceOf(List<String> frames) => Trace.parse(
   ].join('\n'),
 );
 
+/// A value whose `toString` throws, as a mock with a missing stub does.
+final class Unrenderable {
+  const Unrenderable();
+
+  @override
+  String toString() => throw StateError('cannot render');
+}
+
 void main() {
   group('an origin', () {
     test('names the first frame that is not the framework', () {
@@ -185,6 +193,17 @@ void main() {
       expect(repr((1, 'a')), '(1, a)');
     });
 
+    test('says so rather than throwing when a value will not render', () {
+      // The report is written before the property's failure is raised, so an
+      // exception from here would replace the counterexample the reader was
+      // about to be shown with one from the reporter.
+      expect(repr(const Unrenderable()), '<unprintable Unrenderable>');
+      expect(
+        repr(<Object>[1, const Unrenderable()]),
+        '[1, <unprintable Unrenderable>]',
+      );
+    });
+
     test('does not chase a value that contains itself', () {
       final looping = <Object>[];
       looping.add(looping);
@@ -315,6 +334,23 @@ void main() {
       expect(
         reproductionHints(const Settings(), printBlob: true),
         isNot(contains(contains('reproduce'))),
+      );
+    });
+
+    test('promises no replay when there was no run to keep one', () {
+      // A single test case, a nondeterministic run, a bare replay from a
+      // blob: nothing was stored, so pointing the reader at a database would
+      // send them somewhere that has never heard of this failure.
+      expect(
+        reproductionHints(
+          const Settings(database: Database.standard, databaseKey: 'k'),
+          stored: false,
+        ),
+        isEmpty,
+      );
+      expect(
+        reproductionHints(const Settings(seed: 3), stored: false),
+        <String>['Seed: 3.'],
       );
     });
 
