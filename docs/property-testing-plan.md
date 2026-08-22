@@ -804,10 +804,16 @@ because a test framework's correctness claims are about what *users* see:
    `threshold+1`; `lists(integers())` failing on `length >= 2` shrinks to `[0, 0]` (the
    canonical sort example every sibling README uses); a failing `oneOf` shrinks into its first
    failing branch; `where` never surfaces a filtered value; a `tuple2` shrinks each component.
-   A broken span (missing LIST_ELEMENT, an unclosed FILTER discard) degrades these before any
-   other symptom appears. Pinned values are engine-version-dependent by nature; the update
-   tool's engine-bump workflow re-runs them, and a bump commit may re-pin with the diff as
-   review evidence.
+   Measured while landing P2, by deleting each span and re-running: **the pins move only
+   where the value has parts that can be deleted.** Every fixed-arity pin — mapped, filter,
+   `tuple2`, `oneOf`, `optional`, composite — still passes with its span removed, because the
+   engine reaches the same minimum unaided on a value of fixed shape. The recursive-tree pin
+   stops finishing at all (minutes against milliseconds). So the pins are the net for
+   *structural* shrinking — recursion, and the collections in P4 — and **each compound
+   generator also gets a scripted-`DrawContext` test pinning its exact call sequence,
+   including each `discard`**, which is what catches a misplaced span on a flat shape. Pinned
+   values are engine-version-dependent by nature; the update tool's engine-bump workflow
+   re-runs them, and a bump commit may re-pin with the diff as review evidence.
 4. **Runner semantics** (real engine): catch-ladder mapping for all four outcomes;
    `assume`-heavy properties end invalid without burning budget; `StopTest` under a
    deliberately over-drawing body ends overrun; distinct assertion sites yield distinct
@@ -933,9 +939,10 @@ tests; generated artifacts regenerate with their inputs.
     cache with the leak-tracker exemption; `TextGenerator` as `fromRegex` alphabet. Green:
     alphabet constraints hold; self-rejecting draws surface as assumption rejections;
     cache-reuse proven (one native construction across a run).
-12. `feat: bytes, dates, times, dateTimes, uuids, ipAddresses` — type mappings per §6.4.
-    Green: range properties; UUID version nibble; v4/v6 branch coverage; audit extension now
-    green for the whole primitive surface.
+12. `feat: bytes, dates, times, dateTimes, uuids, ipAddresses` — type mappings per §6.4,
+    plus `package:hegel/generators.dart` (§6.4), which lands here because this is the commit
+    that makes a catalog worth importing on its own. Green: range properties; UUID version
+    nibble; v4/v6 branch coverage; audit extension now green for the whole primitive surface.
 
 **P4 — collections**
 

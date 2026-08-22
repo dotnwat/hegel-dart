@@ -11,6 +11,14 @@
 /// Unlike the build hook, this runs in a normal environment, so it may use the
 /// GitHub API and `GITHUB_TOKEN` to look up release metadata. The engine
 /// downloads themselves stay on public URLs that need no token.
+///
+/// Expect `test/property/shrink_test.dart` to be part of a bump. Those tests
+/// pin the exact counterexample a property shrinks to, and shrinking is the
+/// engine's, so a new engine may legitimately settle somewhere else. A moved
+/// pin is a review question rather than a regression: re-pin it in the bump
+/// commit and let the diff be the evidence. A pin that stops *finishing* is
+/// the other thing, and means the new engine reads this package's spans
+/// differently.
 library;
 
 import 'dart:convert';
