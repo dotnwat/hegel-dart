@@ -438,6 +438,89 @@ void main() {
       expect(values, everyElement(lessThanOrEqualTo(1)));
     });
 
+    test('refuses a range only signed zero tells apart', () {
+      // -0.0 == 0.0, so `>` reads this as a range in order and the engine
+      // meets it as an internal error. It is an inverted range: the engine
+      // orders the two zeros apart even though Dart's operators do not.
+      expect(
+        () => doubles(min: 0.0, max: -0.0),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('exceeds max'),
+          ),
+        ),
+      );
+      expect(doubles(min: -0.0, max: 0.0), isA<Generator<double>>());
+    });
+
+    test('refuses an exclusion that empties a single-value range', () {
+      expect(
+        () => doubles(min: 1, max: 1, excludeMin: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('leaves nothing to draw'),
+          ),
+        ),
+      );
+      expect(
+        () => doubles(
+          min: double.infinity,
+          max: double.infinity,
+          excludeMax: true,
+        ),
+        throwsArgumentError,
+        reason:
+            'the engine answers this one with the value it was told to '
+            'exclude, which is worse than refusing it',
+      );
+      expect(doubles(min: 1, max: 1), isA<Generator<double>>());
+    });
+
+    test('refuses NaN and infinity where no bound could hold them', () {
+      // The engine refuses both, on every case rather than at the line that
+      // asked, so they are refused here instead.
+      expect(
+        () => doubles(min: 0, max: 1, allowNan: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('needs both bounds open'),
+          ),
+        ),
+      );
+      expect(() => doubles(min: 0, allowNan: true), throwsArgumentError);
+      expect(
+        () => doubles(min: 0, max: 1, allowInfinity: true),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('needs an open bound'),
+          ),
+        ),
+      );
+    });
+
+    test('allows what the bounds can still hold', () {
+      // The other side of the same rule: turning either off is always
+      // allowed, and turning them on is allowed where a bound is open.
+      expect(doubles(allowNan: true), isA<Generator<double>>());
+      expect(
+        doubles(min: 0, max: 1, allowNan: false),
+        isA<Generator<double>>(),
+      );
+      expect(doubles(min: 0, allowInfinity: true), isA<Generator<double>>());
+      expect(
+        doubles(min: 0, max: 1, allowInfinity: false),
+        isA<Generator<double>>(),
+      );
+    });
+
     test('refuses a bound that is not a number', () {
       expect(
         () => doubles(min: double.nan),

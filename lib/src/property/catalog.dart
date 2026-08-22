@@ -256,9 +256,15 @@ final class _BooleanGenerator extends Generator<bool> {
 /// that a bound you did not give cannot be violated: NaN comes up only when
 /// both ends are open, since NaN compares false against every bound and would
 /// otherwise walk through one; an infinity comes up only on an end that is
-/// open, since a closed end already excludes it. Set either explicitly to
-/// override that -- `allowNan: false` on an unbounded generator is the usual
-/// one, for code that has no answer for NaN and no obligation to.
+/// open, since a closed end already excludes it.
+///
+/// Either may be turned *off* -- `allowNan: false` on an unbounded generator
+/// is the usual one, for code that has no answer for NaN and no obligation to
+/// have one. Turning either on past what the bounds allow is refused rather
+/// than attempted, because the engine refuses it too: there is no way to draw
+/// a NaN that respects a bound, or an infinity that respects two, so
+/// `doubles(min: 0, max: 1, allowNan: true)` describes a generator with
+/// nothing to generate.
 ///
 /// Values shrink toward zero, and simple values -- integers, then halves --
 /// are preferred over ones with long mantissas, so a counterexample tends to
@@ -276,11 +282,41 @@ Generator<double> doubles({
   // NaN in it would look like a range in order.
   if (min.isNaN) throw ArgumentError.value(min, 'min', 'is not a number');
   if (max.isNaN) throw ArgumentError.value(max, 'max', 'is not a number');
-  if (min > max) {
+  // compareTo rather than >, which reads -0.0 and 0.0 as equal. They are the
+  // same number and not the same bound: the engine orders them apart, so
+  // `min: 0.0, max: -0.0` is an inverted range that > would wave through and
+  // the engine would meet as an internal error.
+  if (min.compareTo(max) > 0) {
     throw ArgumentError.value(min, 'min', 'exceeds max ($max)');
+  }
+  if (min == max && (excludeMin || excludeMax)) {
+    throw ArgumentError.value(
+      min,
+      'min',
+      'is also max ($max), and excluding either leaves nothing to draw',
+    );
   }
   final lowOpen = min == double.negativeInfinity;
   final highOpen = max == double.infinity;
+  if (allowNan ?? false) {
+    // Only fully unbounded, because a NaN is outside every bound: the engine
+    // says "Cannot have allow_nan=true with min_value or max_value", and it
+    // says it on every case rather than here.
+    if (!lowOpen || !highOpen) {
+      throw ArgumentError.value(
+        allowNan,
+        'allowNan',
+        'needs both bounds open, since no NaN is inside a bound',
+      );
+    }
+  }
+  if ((allowInfinity ?? false) && !lowOpen && !highOpen) {
+    throw ArgumentError.value(
+      allowInfinity,
+      'allowInfinity',
+      'needs an open bound for an infinity to be inside',
+    );
+  }
   return _DoubleGenerator(
     min: min,
     max: max,
