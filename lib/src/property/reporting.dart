@@ -190,8 +190,13 @@ String renderFailure({
   required List<Drawn> draws,
   required List<String> notes,
   required List<String> hints,
+  String? heading,
 }) {
   final sections = <String>[
+    // Given only when a run found more than one bug, and then it is the
+    // origin: two blocks of draws with nothing between them read as one
+    // counterexample with twice as many values in it.
+    ?heading,
     if (draws.isNotEmpty)
       <String>[
         for (final (int index, Drawn drawn) in draws.indexed)
@@ -202,6 +207,20 @@ String renderFailure({
   ];
   return sections.join('\n\n');
 }
+
+/// The line that says a property failed in more than one way.
+///
+/// The engine groups failures by origin and shrinks each group separately, so
+/// a run that reports several has found several bugs rather than one bug
+/// several times. Only the first is raised -- a test has one error that ends
+/// it -- and the rest reach package:test through its own channel for errors
+/// that belong to a test without being that one, which is easy to read past.
+/// So they are also named together, in one place, in the order they were
+/// reported.
+String renderOrigins(List<String> origins) => <String>[
+  'The property failed in ${origins.length} distinct ways:',
+  for (final String origin in origins) '  $origin',
+].join('\n');
 
 /// What to tell the reader about getting this failure back.
 ///

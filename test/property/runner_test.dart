@@ -390,6 +390,39 @@ void main() {
     });
   });
 
+  group('a replayed counterexample, as a value', () {
+    const String origin = 'StateError at test/thing_test.dart:9';
+
+    test('hands back the failure and its own stack', () {
+      final error = StateError('the property failed');
+      final stack = StackTrace.current;
+
+      final replayed = replayedFailure(
+        origin: origin,
+        error: error,
+        stack: stack,
+      );
+
+      expect(replayed.error, same(error));
+      expect(replayed.stack, same(stack));
+    });
+
+    test('hands back an explanation when the replay held', () {
+      // The same four endings `raiseReplayed` throws, since it is this that
+      // decides them. Checked once here rather than four times, because what
+      // this adds over the throwing form is that there is something to hold
+      // on to -- which is what a second distinct failure needs.
+      final replayed = replayedFailure(
+        origin: origin,
+        error: null,
+        stack: null,
+      );
+
+      expect(replayed.error, isA<PropertyError>());
+      expect(replayed.stack, isNot(StackTrace.empty));
+    });
+  });
+
   group('a replayed counterexample', () {
     // The engine refuses a body that changes its mind during a run -- it
     // reports the flakiness itself -- so a body that changes its mind between

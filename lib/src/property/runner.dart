@@ -84,10 +84,12 @@ Future<void> runProperty(
     return _reproduce(reproduce, body, resolved, session, diagnostic);
   }
   final run = Run.start(resolved, session: session, onOutput: diagnostic);
-  // The case that first failed, kept for the runs that store no
-  // counterexample to replay: with nothing to re-run, what it captured is the
-  // only account of the failure there will ever be.
-  _Outcome? discovered;
+  // The case that first failed under each origin, kept for the runs that
+  // store no counterexample to replay: with nothing to re-run, what it
+  // captured is the only account of that failure there will ever be. Keyed by
+  // origin because the engine reports one failure per origin, and the account
+  // of one bug is no account at all of another.
+  final discovered = <String, _Outcome>{};
   try {
     while (true) {
       final engineCase = run.nextTestCase();
@@ -96,7 +98,7 @@ Future<void> runProperty(
         final testCase = TestCase(EngineDrawContext(engineCase));
         final outcome = await _runCase(testCase, body);
         if (outcome.status == engine.TestCaseStatus.interesting) {
-          discovered ??= outcome;
+          discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
         engineCase.markComplete(outcome.status, origin: outcome.origin);
       } finally {
@@ -261,59 +263,107 @@ Future<Never> _report(
   Libhegel session,
   FutureOr<void> Function(TestCase) body,
   void Function(String line) diagnostic,
-  _Outcome? discovered,
+  Map<String, _Outcome> discovered,
   bool? printBlob,
 ) async {
-  final failure = result.failure(0);
-  try {
-    final origin = failure.origin;
-    final blob = failure.reproductionBlob;
-    if (blob == null) {
-      // Two runs store nothing to replay: one that produced a single test
-      // case, which never shrinks, and one declared nondeterministic, which
-      // has nothing to shrink toward. Both leave the discovering case as the
-      // only account of the failure, which is what the engine's own
-      // documentation says to report from.
-      if (discovered == null) {
-        throw PropertyError(
-          'the property failed at $origin, and the run kept nothing that '
-          'says how',
-        );
-      }
-      // Nothing was stored, so nothing will be replayed, and saying
-      // otherwise would send the reader back to a database that has never
-      // heard of this failure.
-      _describe(discovered.testCase, settings, diagnostic, stored: false);
-      Error.throwWithStackTrace(discovered.error!, discovered.stack!);
-    }
-
-    final replayCase = engine.TestCase.fromBlob(
-      settings,
-      blob,
-      session: session,
-    );
-    final _Outcome outcome;
+  final origins = <String>[];
+  final failures = <({Object error, StackTrace stack})>[];
+  final count = result.failureCount;
+  for (var index = 0; index < count; index++) {
+    final failure = result.failure(index);
     try {
-      // Not marked complete: a case from a blob belongs to no run, so there
-      // is nothing waiting to be told how it ended.
-      outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
-    } finally {
-      replayCase.dispose();
-    }
+      final origin = failure.origin;
+      origins.add(origin);
+      // Named only when there is more than one, because a heading over the
+      // only block there is says nothing the error above it did not.
+      final heading = count > 1 ? origin : null;
+      final blob = failure.reproductionBlob;
+      if (blob == null) {
+        // Two runs store nothing to replay: one that produced a single test
+        // case, which never shrinks, and one declared nondeterministic, which
+        // has nothing to shrink toward. Both leave the discovering case as the
+        // only account of the failure, which is what the engine's own
+        // documentation says to report from.
+        final found = discovered[origin];
+        if (found == null) {
+          failures.add((
+            error: PropertyError(
+              'the property failed at $origin, and the run kept nothing that '
+              'says how',
+            ),
+            stack: StackTrace.current,
+          ));
+          continue;
+        }
+        // Nothing was stored, so nothing will be replayed, and saying
+        // otherwise would send the reader back to a database that has never
+        // heard of this failure.
+        _describe(
+          found.testCase,
+          settings,
+          diagnostic,
+          stored: false,
+          heading: heading,
+        );
+        failures.add((error: found.error!, stack: found.stack!));
+        continue;
+      }
 
-    // Before raising, so that package:test has the counterexample in hand by
-    // the time it prints the failure.
-    _describe(
-      outcome.testCase,
-      settings,
-      diagnostic,
-      blob: blob,
-      printBlob: printBlob,
-    );
-    raiseReplayed(origin: origin, error: outcome.error, stack: outcome.stack);
-  } finally {
-    failure.dispose();
+      final replayCase = engine.TestCase.fromBlob(
+        settings,
+        blob,
+        session: session,
+      );
+      final _Outcome outcome;
+      try {
+        // Not marked complete: a case from a blob belongs to no run, so there
+        // is nothing waiting to be told how it ended.
+        outcome = await _runCase(TestCase(EngineDrawContext(replayCase)), body);
+      } finally {
+        replayCase.dispose();
+      }
+
+      // Before raising, so that package:test has the counterexample in hand by
+      // the time it prints the failure.
+      _describe(
+        outcome.testCase,
+        settings,
+        diagnostic,
+        blob: blob,
+        printBlob: printBlob,
+        heading: heading,
+      );
+      failures.add(
+        replayedFailure(
+          origin: origin,
+          error: outcome.error,
+          stack: outcome.stack,
+        ),
+      );
+    } finally {
+      failure.dispose();
+    }
   }
+
+  if (failures.isEmpty) {
+    // The engine said the property failed and then listed nothing that did.
+    // Not reachable through any run this package can produce, and reported
+    // rather than left to fall out of `first` on an empty list, because a
+    // range error out of the reporter would say nothing about the property.
+    throw PropertyError('the run reported a failure and then named none');
+  }
+  if (origins.length > 1) diagnostic(renderOrigins(origins));
+
+  // Every failure after the first goes through package:test's own channel for
+  // an error that is not the one being thrown. Registered before the throw
+  // rather than after, there being no after: the throw is where this function
+  // ends. The first is raised as it stands so that an `expect` mismatch is
+  // rendered by package:test the way it renders every other one, and a
+  // debugger stops where the assertion is.
+  for (final extra in failures.skip(1)) {
+    registerException(extra.error, extra.stack);
+  }
+  Error.throwWithStackTrace(failures.first.error, failures.first.stack);
 }
 
 /// Reports what [testCase] drew and noted, and how to get it back.
@@ -328,6 +378,7 @@ void _describe(
   String? blob,
   bool? printBlob,
   bool stored = true,
+  String? heading,
 }) => diagnostic(
   renderFailure(
     draws: testCase.draws,
@@ -338,6 +389,7 @@ void _describe(
       printBlob: printBlob,
       stored: stored,
     ),
+    heading: heading,
   ),
 );
 
@@ -422,26 +474,55 @@ Never raiseReplayed({
   required Object? error,
   required StackTrace? stack,
 }) {
+  final replayed = replayedFailure(origin: origin, error: error, stack: stack);
+  Error.throwWithStackTrace(replayed.error, replayed.stack);
+}
+
+/// [raiseReplayed], as a value rather than as a throw.
+///
+/// What a run with more than one distinct failure needs: only the first of
+/// them is thrown, and the rest are handed to package:test as errors that
+/// belong to this test without being the one that ended it. Deciding what a
+/// replay amounted to and raising it are therefore two steps, and this is the
+/// first -- the same decision either way, so the two cannot come apart.
+///
+/// The stack for a replay that failed is the failure's own. For the three
+/// endings that produce a [PropertyError] there is no such stack, so it is
+/// taken here, which is where the explanation is written.
+({Object error, StackTrace stack}) replayedFailure({
+  required String origin,
+  required Object? error,
+  required StackTrace? stack,
+}) {
   switch (error) {
     case null:
-      throw PropertyError(
-        'the property failed at $origin, but replaying its counterexample '
-        'did not fail again; a property that does not fail the same way '
-        'twice usually depends on something it did not draw',
+      return (
+        error: PropertyError(
+          'the property failed at $origin, but replaying its counterexample '
+          'did not fail again; a property that does not fail the same way '
+          'twice usually depends on something it did not draw',
+        ),
+        stack: StackTrace.current,
       );
     case StopTest():
-      throw PropertyError(
-        'the property failed at $origin, but replaying its counterexample '
-        'ran out of choices; the body drew more than was stored, so the '
-        'counterexample no longer matches its generators',
+      return (
+        error: PropertyError(
+          'the property failed at $origin, but replaying its counterexample '
+          'ran out of choices; the body drew more than was stored, so the '
+          'counterexample no longer matches its generators',
+        ),
+        stack: StackTrace.current,
       );
     case AssumptionFailed():
-      throw PropertyError(
-        'the property failed at $origin, but replaying its counterexample '
-        'rejected it as invalid; the body assumed differently on the replay',
+      return (
+        error: PropertyError(
+          'the property failed at $origin, but replaying its counterexample '
+          'rejected it as invalid; the body assumed differently on the replay',
+        ),
+        stack: StackTrace.current,
       );
     case final Object failure:
-      Error.throwWithStackTrace(failure, stack!);
+      return (error: failure, stack: stack!);
   }
 }
 

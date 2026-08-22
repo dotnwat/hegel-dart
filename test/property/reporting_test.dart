@@ -259,6 +259,45 @@ void main() {
     });
   });
 
+  group('a failure report with a heading', () {
+    test('puts it in a section of its own, above the draws', () {
+      expect(
+        renderFailure(
+          draws: <Drawn>[(name: 'n', value: 1)],
+          notes: <String>[],
+          hints: <String>[],
+          heading: 'TestFailure at test/thing_test.dart:9',
+        ),
+        'TestFailure at test/thing_test.dart:9\n\nn = 1',
+      );
+    });
+
+    test('is left out when there is none, which is the usual case', () {
+      expect(
+        renderFailure(
+          draws: <Drawn>[(name: 'n', value: 1)],
+          notes: <String>[],
+          hints: <String>[],
+        ),
+        'n = 1',
+      );
+    });
+  });
+
+  group('the origins line', () {
+    test('names every origin, in the order they were reported', () {
+      expect(
+        renderOrigins(<String>[
+          'StateError at a.dart:1',
+          'RangeError at b.dart:2',
+        ]),
+        'The property failed in 2 distinct ways:\n'
+        '  StateError at a.dart:1\n'
+        '  RangeError at b.dart:2',
+      );
+    });
+  });
+
   group('a reproduction hint', () {
     test('says what the engine does when nobody chose', () {
       expect(reproductionHints(const Settings()).single, contains('under CI'));

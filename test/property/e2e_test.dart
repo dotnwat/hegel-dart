@@ -150,6 +150,52 @@ void main() {
     );
   });
 
+  group('a property that fails in more than one way', () {
+    test('reports every failure, not just the one that ended it', () async {
+      final result = await runFixture(<String>['-N', 'whichever kind']);
+
+      expect(result.exitCode, isNot(0));
+      // Both errors, each rendered by package:test out of the object the
+      // body raised. The odd branch is the one thrown and the even branch is
+      // the one registered, but a reader is not meant to be able to tell
+      // which was which, so both are asserted the same way.
+      expect(result.stdout, contains('Expected: a value less than <200>'));
+      expect(result.stdout, contains('an odd value went large'));
+      expect(result.stdout, contains('Expected: a value less than <100>'));
+      expect(result.stdout, contains('an even value went large'));
+    });
+
+    test('shrinks each failure on its own', () async {
+      final result = await runFixture(<String>['-N', 'whichever kind']);
+
+      // The smallest failing value of each kind, which is the whole reason
+      // the two are kept apart: shrunk together, one of them would drag the
+      // other off its own minimum.
+      expect(result.stdout, contains('value = 201'));
+      expect(result.stdout, contains('value = 100'));
+    });
+
+    test('names both origins in one place', () async {
+      final result = await runFixture(<String>['-N', 'whichever kind']);
+
+      expect(result.stdout, contains('The property failed in 2 distinct ways'));
+      final even = lineOf('small values stay small, whichever kind they are');
+      // The two assertion sites, by line, since that is what the engine
+      // groups on and what a reader has to go and look at.
+      expect(result.stdout, contains('property_fixture.dart:${even + 3}'));
+      expect(result.stdout, contains('property_fixture.dart:${even + 5}'));
+    });
+
+    test('counts as one failing test, not two', () async {
+      final result = await runFixture(<String>['-N', 'whichever kind']);
+
+      // A property is one test however many bugs it found. Two would mean
+      // the extra failures had been registered against something other than
+      // the test that was running.
+      expect(result.stdout, contains('-1: Some tests failed'));
+    });
+  });
+
   test('the reporter points at the line the property was written on', () async {
     final result = await runFixture(<String>[
       '-N',

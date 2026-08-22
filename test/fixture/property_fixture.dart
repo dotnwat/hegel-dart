@@ -28,4 +28,18 @@ void main() {
     tc.note('about to check $value');
     expect(value, lessThan(50));
   }, settings: fixtureSettings);
+
+  // Two bugs in one property, not one bug reached two ways: the engine groups
+  // failures by where they came from, so two assertion sites are two things
+  // to shrink and two things to report. Which is the point -- a run that
+  // showed only the first would leave the second to be found on the next run,
+  // after the first was fixed.
+  property('small values stay small, whichever kind they are', (TestCase tc) {
+    final value = tc.draw(integers(min: 0, max: 1000), name: 'value');
+    if (value.isEven) {
+      expect(value, lessThan(100), reason: 'an even value went large');
+    } else {
+      expect(value, lessThan(200), reason: 'an odd value went large');
+    }
+  }, settings: fixtureSettings);
 }
