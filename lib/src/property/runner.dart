@@ -272,14 +272,14 @@ Future<Never> _report(
   final origins = <String>[];
   final failures = <({Object error, StackTrace stack})>[];
   final count = result.failureCount;
+  // Asked once, before anything is written, because it decides both how a
+  // block is headed and where the failures that are not thrown end up.
+  final inTest = insideTest();
   for (var index = 0; index < count; index++) {
     final failure = result.failure(index);
     try {
       final origin = failure.origin;
       origins.add(origin);
-      // Named only when there is more than one, because a heading over the
-      // only block there is says nothing the error above it did not.
-      final heading = count > 1 ? origin : null;
       final blob = failure.reproductionBlob;
       if (blob == null) {
         // Two runs store nothing to replay: one that produced a single test
@@ -306,7 +306,13 @@ Future<Never> _report(
           settings,
           diagnostic,
           stored: false,
-          heading: heading,
+          heading: _heading(
+            index: index,
+            count: count,
+            origin: origin,
+            error: found.error!,
+            inTest: inTest,
+          ),
         );
         failures.add((error: found.error!, stack: found.stack!));
         continue;
@@ -326,6 +332,11 @@ Future<Never> _report(
         replayCase.dispose();
       }
 
+      final replayed = replayedFailure(
+        origin: origin,
+        error: outcome.error,
+        stack: outcome.stack,
+      );
       // Before raising, so that package:test has the counterexample in hand by
       // the time it prints the failure.
       _describe(
@@ -334,15 +345,15 @@ Future<Never> _report(
         diagnostic,
         blob: blob,
         printBlob: printBlob,
-        heading: heading,
-      );
-      failures.add(
-        replayedFailure(
+        heading: _heading(
+          index: index,
+          count: count,
           origin: origin,
-          error: outcome.error,
-          stack: outcome.stack,
+          error: replayed.error,
+          inTest: inTest,
         ),
       );
+      failures.add(replayed);
     } finally {
       failure.dispose();
     }
@@ -357,17 +368,55 @@ Future<Never> _report(
   }
   if (origins.length > 1) diagnostic(renderOrigins(origins));
 
-  // Every failure after the first goes through package:test's own channel for
-  // an error that is not the one being thrown. Registered before the throw
-  // rather than after, there being no after: the throw is where this function
-  // ends. The first is raised as it stands so that an `expect` mismatch is
-  // rendered by package:test the way it renders every other one, and a
-  // debugger stops where the assertion is.
-  for (final extra in failures.skip(1)) {
-    registerException(extra.error, extra.stack);
+  // A run can find several bugs and a future carries one error, so every
+  // failure after the first has to reach the caller some other way.
+  //
+  // Inside a test that way is package:test's own: `registerException`
+  // attributes an error to the running test without ending it, and the test
+  // fails carrying all of them. Registered before the throw rather than
+  // after, there being no after -- the throw is where this function ends.
+  //
+  // Outside a test there is no such channel, and using one anyway is worse
+  // than not reporting at all. `registerException` is
+  // `Zone.current.handleUncaughtError`: in a script it does not hand the
+  // error to whoever awaited the run, it goes past them, and the process dies
+  // on an error the runner had in hand and was about to report properly. So
+  // there the extra failures travel with their counterexamples instead --
+  // [_heading] has already put each one at the top of its own block -- and
+  // the future carries the first, which is the one contract every caller has.
+  if (inTest) {
+    for (final extra in failures.skip(1)) {
+      registerException(extra.error, extra.stack);
+    }
   }
+  // Raised as it stands so that an `expect` mismatch is rendered by
+  // package:test the way it renders every other one, and a debugger stops
+  // where the assertion is.
   Error.throwWithStackTrace(failures.first.error, failures.first.stack);
 }
+
+/// What to head the block for the failure at [index] with, if anything.
+///
+/// Nothing when it is the only failure: a heading over the one block there is
+/// says nothing the error above it did not. The origin when there are
+/// several, so that two sets of draws do not read as one counterexample with
+/// twice as many values in it.
+///
+/// And the error itself for the failures that will not be raised anywhere --
+/// every one after the first, when there is no test to register them
+/// against. Without it the block is a counterexample with no failure attached
+/// to it, which is the one thing a reader cannot work out for themselves.
+String? _heading({
+  required int index,
+  required int count,
+  required String origin,
+  required Object error,
+  required bool inTest,
+}) => switch (index) {
+  _ when count == 1 => null,
+  0 => origin,
+  _ => inTest ? origin : '$origin\n$error',
+};
 
 /// Reports what [testCase] drew and noted, and how to get it back.
 ///
@@ -529,6 +578,23 @@ Never raiseReplayed({
   }
 }
 
+/// Whether there is a running test to attach anything to.
+///
+/// Asked twice and for two different reasons -- where a diagnostic goes, and
+/// where a failure that is not being thrown goes -- so it is answered once.
+/// The two have to agree: a run that decided it was in a test for one and out
+/// of it for the other would report half of itself into a buffer nobody
+/// reads.
+@visibleForTesting
+bool insideTest() {
+  try {
+    TestHandle.current;
+    return true;
+  } on OutsideTestException {
+    return false;
+  }
+}
+
 /// Where diagnostics go when the caller does not say.
 ///
 /// Inside a test, package:test's own on-failure buffer: lines are kept and
@@ -546,11 +612,7 @@ Never raiseReplayed({
 /// being noisy is the point.
 @visibleForTesting
 void Function(String line) defaultDiagnostic(Settings settings) {
-  try {
-    TestHandle.current;
-  } on OutsideTestException {
-    return stderr.writeln;
-  }
+  if (!insideTest()) return stderr.writeln;
   return switch (settings.verbosity) {
     // Null is the engine deciding, and it decides on a summary line per run,
     // which is not somebody watching.

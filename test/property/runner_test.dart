@@ -396,6 +396,16 @@ void main() {
     });
   });
 
+  group('whether a test is running', () {
+    test('is true in here, which is what both branches turn on', () {
+      // The one question that decides where a diagnostic goes and where a
+      // failure that is not being thrown goes. Its other answer belongs to a
+      // process with no package:test in it, which is what
+      // test/property/standalone_test.dart drives.
+      expect(insideTest(), isTrue);
+    });
+  });
+
   group('the default diagnostic sink', () {
     test('buffers until failure at the verbosity a run usually has', () {
       for (final Verbosity? verbosity in <Verbosity?>[
