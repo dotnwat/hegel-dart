@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import '../libhegel/collection.dart' as engine;
 import '../libhegel/errors.dart';
 import '../libhegel/span.dart';
 import '../libhegel/string_generator.dart';
@@ -17,6 +18,27 @@ import 'generator.dart';
 /// which case the report falls back to the draw's position.
 @internal
 typedef Drawn = ({String? name, Object? value});
+
+/// A sequence whose length the engine decides, as a generator sees it.
+///
+/// The engine end of every variable-length value: [more] asks whether another
+/// element is wanted, [reject] says the one just produced cannot be used, and
+/// [dispose] gives the handle back. Which test case the decisions are drawn
+/// from is the seam's business rather than the generator's, so unlike the
+/// binding layer's [engine.Collection] none of these take one.
+@internal
+abstract interface class DrawCollection {
+  /// Whether the engine wants another element.
+  bool more();
+
+  /// Reports that the element just produced cannot be used.
+  ///
+  /// [why] is for the engine's future diagnostics; it does not act on it yet.
+  void reject(String why);
+
+  /// Releases the collection. Idempotent.
+  void dispose();
+}
 
 /// The engine, as a generator needs to see it.
 ///
@@ -82,6 +104,12 @@ abstract interface class DrawContext {
 
   /// Draws the sixteen bytes of an IPv6 address.
   Uint8List drawIpv6();
+
+  /// Starts a sequence of [minLength] to [maxLength] elements.
+  ///
+  /// A null [maxLength] leaves the length unbounded, which is the engine
+  /// keeping it small on its own rather than the length running away.
+  DrawCollection startCollection({required int minLength, int? maxLength});
 
   /// Opens a span grouping the draws made until the matching [stopSpan].
   void startSpan(SpanLabel label);
@@ -167,10 +195,40 @@ final class EngineDrawContext implements DrawContext {
   Uint8List drawIpv6() => testCase.drawIpv6();
 
   @override
+  DrawCollection startCollection({required int minLength, int? maxLength}) =>
+      _EngineCollection(
+        testCase,
+        testCase.startCollection(minSize: minLength, maxSize: maxLength),
+      );
+
+  @override
   void startSpan(SpanLabel label) => testCase.startSpan(label);
 
   @override
   void stopSpan({bool discard = false}) => testCase.stopSpan(discard: discard);
+}
+
+/// A [DrawCollection] backed by a real engine collection.
+///
+/// Holds the test case the collection was started on and drives it from that
+/// one throughout. The handle is shared by a whole test-case family, so which
+/// member asks decides where the continue-or-stop choice is recorded, and a
+/// sequence whose decisions came from two different members would record its
+/// length in two places.
+final class _EngineCollection implements DrawCollection {
+  _EngineCollection(this._testCase, this._collection);
+
+  final engine.TestCase _testCase;
+  final engine.Collection _collection;
+
+  @override
+  bool more() => _collection.more(_testCase);
+
+  @override
+  void reject(String why) => _collection.reject(_testCase, why: why);
+
+  @override
+  void dispose() => _collection.dispose();
 }
 
 /// One test case, as a property body sees it.

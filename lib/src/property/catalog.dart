@@ -1054,3 +1054,87 @@ final class _AddressGenerator extends Generator<InternetAddress> {
     _version == 4 ? testCase.context.drawIpv4() : testCase.context.drawIpv6(),
   );
 }
+
+/// Generates lists of what [elements] generates.
+///
+/// The engine decides how long each list is, within [minLength] and
+/// [maxLength]; a null [maxLength] leaves that to the engine, which keeps
+/// lists short on its own rather than letting one run away. Length is not
+/// drawn up front but decided element by element, which is what lets the
+/// shrinker delete an element from the middle of a counterexample rather than
+/// only from its end.
+///
+/// With [unique], no two elements of a list compare equal. Equality is Dart's
+/// own, `==` and `hashCode`, so it means for a list of ints what it means for
+/// a `Set<int>` -- and for a list of lists it means identity, since Dart's
+/// `List` does not define structural equality. An element type that wants
+/// structural uniqueness has to say so by implementing `==`.
+///
+/// Uniqueness is enforced by redrawing rather than by discarding: an element
+/// equal to one already in the list is refused, and the engine produces
+/// another in its place. A refused element does not count toward the length,
+/// so `lists(booleans(), minLength: 3, unique: true)` cannot be satisfied and
+/// spends the case trying -- ask for a length the element type can actually
+/// fill.
+///
+/// Values shrink toward the shortest list the bounds allow, and each element
+/// toward what its own generator shrinks to.
+Generator<List<T>> lists<T>(
+  Generator<T> elements, {
+  int minLength = 0,
+  int? maxLength,
+  bool unique = false,
+}) {
+  _checkLengths(minLength, maxLength);
+  return _ListGenerator<T>(elements, minLength, maxLength, unique);
+}
+
+/// A sequence of one generator's values, as long as the engine decides.
+final class _ListGenerator<T> extends Generator<List<T>> {
+  const _ListGenerator(
+    this._elements,
+    this._minLength,
+    this._maxLength,
+    this._unique,
+  );
+
+  final Generator<T> _elements;
+  final int _minLength;
+  final int? _maxLength;
+  final bool _unique;
+
+  @override
+  List<T> generate(TestCase testCase) => testCase.span(SpanLabel.list, () {
+    // Inside the span, so the whole sequence -- the length decisions as well
+    // as the elements -- is one thing the shrinker can simplify or delete.
+    final collection = testCase.context.startCollection(
+      minLength: _minLength,
+      maxLength: _maxLength,
+    );
+    try {
+      final values = <T>[];
+      final seen = _unique ? <T>{} : null;
+      while (collection.more()) {
+        // Each element in its own span, so an element is a unit the shrinker
+        // can take out whole rather than a run of draws it has to guess the
+        // boundaries of.
+        final value = testCase.span(
+          SpanLabel.listElement,
+          () => _elements.generate(testCase),
+        );
+        // Reported after the element's span has closed, which is the engine's
+        // protocol: the element it is told about is the last one produced.
+        if (seen != null && !seen.add(value)) {
+          collection.reject('duplicate element');
+          continue;
+        }
+        values.add(value);
+      }
+      return values;
+    } finally {
+      // Independent of the test case and the run, so it is released here
+      // rather than left to whichever of them ends first.
+      collection.dispose();
+    }
+  });
+}
