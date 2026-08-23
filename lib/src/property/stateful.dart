@@ -5,6 +5,7 @@ import 'dart:async';
 
 import '../libhegel/errors.dart';
 import '../libhegel/span.dart';
+import 'reporting.dart';
 import 'test_case.dart';
 
 /// One thing a stateful test can do.
@@ -127,11 +128,18 @@ abstract base class StateMachine {
 /// Step 3: reset
 /// ```
 ///
+/// Every value a step draws is labelled with that step, so a machine whose
+/// one rule draws a `by` three times reports `step 1 by`, `step 2 by`, and
+/// `step 3 by` rather than three values called `by`. Name the draw; the step
+/// is added, and an unnamed draw has nothing to add it to.
+///
 /// A rule may also turn itself down from inside its body, with
 /// [TestCase.assume], for a precondition that depends on what the step drew
-/// rather than only on the model. That rejection costs the draws it took but
-/// not the step. What it cannot do is stand in for an assumption the *engine*
-/// raised -- drawing from an empty pool, or a string generator that rejected
+/// rather than only on the model. Nothing of it is kept: the step is not
+/// counted, what it said and drew comes back out of the report, and the
+/// choices it made are dropped rather than left in the sequence for the
+/// shrinker to work at. What it cannot do is stand in for an assumption the
+/// *engine* raised -- drawing from an empty pool, or a string generator that rejected
 /// its own draw -- because by then the case is over rather than the step:
 /// the engine has latched it, every later draw would raise the same signal,
 /// and the case ends invalid. Guard those with [Rule.precondition], which is
@@ -148,10 +156,15 @@ abstract base class StateMachine {
 /// read and a write that were never meant to be separable, a check that
 /// stopped being true between the checking and the acting.
 ///
-/// [Rule.group] says what may overlap with what. A worker's notes are kept to
-/// itself while a round runs and flushed at the join point tagged
-/// `[worker N]`, because two workers writing into one log interleave into
-/// something no one can read.
+/// [Rule.group] says what may overlap with what. What a worker says and draws
+/// is kept to itself while a round runs and taken across at the join point
+/// tagged `[worker N]`, because two workers writing into one log interleave
+/// into something no one can read.
+///
+/// Steps are numbered per worker, so a concurrent script has a `Step 1` for
+/// each of them and the tag beside it says whose. There is no number that
+/// means "third step of the case": the logs are taken across a worker at a
+/// time, so one would be read out of order anyway.
 ///
 /// The first concurrent machine on a run is refused: the engine raises
 /// [AssumptionFailed], that case ends invalid, and every case after it is
@@ -205,14 +218,17 @@ Future<void> runStateful(
   try {
     final workers = _workersFor(testCase, driver.concurrency);
     try {
-      final steps = _Steps();
       // Before the first rule as well as after each round: a machine whose
       // invariants do not hold of its initial state is broken before it
       // starts, and finding that out after three steps names the wrong step.
       await _check(testCase, invariants);
       while (driver.nextGroup() != null) {
+        // What a round has to say about itself, as opposed to what its
+        // workers did. Collected rather than written as it happens, so that
+        // it can be put after the scripts it is about.
+        final aside = <String>[];
         try {
-          await _round(testCase, driver, rules, workers, steps);
+          await _round(aside, driver, rules, workers);
         } finally {
           // In a finally, because the round that ends badly is the one whose
           // script the reader most needs: a worker's log left behind on the
@@ -222,13 +238,16 @@ Future<void> runStateful(
               testCase.absorb(worker.testCase, '[worker ${worker.index}]');
             }
           }
+          for (final String line in aside) {
+            testCase.note(line);
+          }
         }
         await _check(testCase, invariants);
       }
     } finally {
-      for (final _Worker worker in workers) {
-        worker.release();
-      }
+      releaseEach(<void Function()>[
+        for (final _Worker worker in workers) worker.release,
+      ]);
     }
   } finally {
     driver.dispose();
@@ -250,11 +269,19 @@ final class _Worker {
 
   /// Gives the handle back. A no-op for the worker that is the root case.
   final void Function() release;
-}
 
-/// The step counter, shared so that a script numbers steps once.
-final class _Steps {
-  int taken = 0;
+  /// How many steps this worker has taken, across every round of the case.
+  ///
+  /// Its own rather than shared with the other workers. A shared counter can
+  /// be wound back only by whoever took the last number, and a rule that
+  /// declines is exactly the case where somebody else may have taken one
+  /// since -- so winding it back hands the same number out twice. Nothing was
+  /// bought by sharing it either: the notes are taken across in worker order
+  /// at the join point, so a number that meant "third step of the case" was
+  /// already being read out of order by the time anyone saw it. Per worker it
+  /// means "third step of this worker's script", which is what the tag beside
+  /// it already says the line is.
+  int steps = 0;
 }
 
 /// The workers for a machine the engine wants run [concurrency] wide.
@@ -266,28 +293,41 @@ List<_Worker> _workersFor(TestCase testCase, int concurrency) {
   if (concurrency == 1) {
     return <_Worker>[_Worker(0, testCase, testCase.context, release: () {})];
   }
-  return <_Worker>[
-    for (var index = 0; index < concurrency; index++)
-      () {
-        final clone = testCase.context.cloneForWorker();
-        final worker = TestCase(clone.context);
-        return _Worker(
-          index,
-          worker,
-          clone.context,
-          // The case first and the handle after it, because a worker's case
-          // is a case: a rule that made something case-scoped registered it
-          // here, and only this knows to give it back. The root case is
-          // released by the runner when the *case* ends, which is why the one
-          // worker of a sequential run releases nothing -- doing it here
-          // would take a pool away from a body that has not finished with it.
-          release: () {
-            worker.release();
-            clone.release();
-          },
-        );
-      }(),
-  ];
+  // Built up rather than written as a list literal, so that a clone the
+  // engine refuses partway through does not strand the ones already taken:
+  // the caller's release loop is reached only once this returns.
+  final workers = <_Worker>[];
+  try {
+    for (var index = 0; index < concurrency; index++) {
+      workers.add(_workerFor(testCase, index));
+    }
+  } on Object {
+    releaseEach(<void Function()>[
+      for (final _Worker worker in workers) worker.release,
+    ]);
+    rethrow;
+  }
+  return workers;
+}
+
+/// One worker of a concurrent machine, on a handle of its own.
+_Worker _workerFor(TestCase testCase, int index) {
+  final clone = testCase.context.cloneForWorker();
+  final worker = TestCase(clone.context);
+  return _Worker(
+    index,
+    worker,
+    clone.context,
+    // The case first and the handle after it, because a worker's case
+    // is a case: a rule that made something case-scoped registered it
+    // here, and only this knows to give it back. The root case is
+    // released by the runner when the *case* ends, which is why the one
+    // worker of a sequential run releases nothing -- doing it here
+    // would take a pool away from a body that has not finished with it.
+    release: () {
+      releaseEach(<void Function()>[worker.release, clone.release]);
+    },
+  );
 }
 
 /// A group number per rule: one for each distinct [Rule.group], zero for none.
@@ -305,21 +345,23 @@ List<int> _groupsOf(List<Rule> rules) {
 }
 
 /// Runs one round, and raises whichever worker's ending speaks for the case.
+///
+/// Anything the round has to say about how it ended goes into [aside], to be
+/// written down once the scripts it refers to are in place.
 Future<void> _round(
-  TestCase root,
+  List<String> aside,
   DrawMachine driver,
   List<Rule> rules,
   List<_Worker> workers,
-  _Steps steps,
 ) async {
   if (workers.length == 1) {
-    return _turn(driver, rules, workers.single, steps);
+    return _turn(driver, rules, workers.single);
   }
   // Every worker is run to its own end rather than to the first failure.
   // The engine gave out a round and expects it back, and a worker abandoned
   // mid-round would leave the machine waiting on rules nobody will pull.
   final endings = await Future.wait(<Future<_Ending?>>[
-    for (final _Worker worker in workers) _ending(driver, rules, worker, steps),
+    for (final _Worker worker in workers) _ending(driver, rules, worker),
   ]);
   final raised = endings.nonNulls.toList();
   if (raised.isEmpty) return;
@@ -328,10 +370,17 @@ Future<void> _round(
   // What the others said is not thrown away: a second worker failing at the
   // same moment is a second thing wrong, and a report that mentioned only the
   // one that won would read as though the rest of the run was fine.
-  for (final _Ending dropped in raised.skip(1)) {
-    // On the root rather than on a worker: it is not one worker's step, it is
+  // In worker order, not in the order precedence put them. These lines are
+  // written directly beneath a block of scripts that is in worker order, and
+  // the only reading available for two-before-one is "the order they finished
+  // in" -- the one inference every other line of this report exists to avoid
+  // implying.
+  final dropped = raised.skip(1).toList()
+    ..sort((_Ending a, _Ending b) => a.worker.compareTo(b.worker));
+  for (final _Ending ending in dropped) {
+    // Not tagged as a worker's own line: it is not one worker's step, it is
     // the account of a round that ended two ways at once.
-    root.note('Worker ${dropped.worker} also ended with ${dropped.error}');
+    aside.addAll(_alsoEnded(ending));
   }
   Error.throwWithStackTrace(winner.error, winner.stack);
 }
@@ -339,15 +388,35 @@ Future<void> _round(
 /// How one worker's round ended, or null if it simply finished.
 typedef _Ending = ({int worker, Object error, StackTrace stack});
 
+/// The lines saying that [ending] also happened.
+///
+/// Lines, plural, because the error a rule actually raises is usually an
+/// `expect` mismatch, whose text runs to three or four of them. Written as
+/// one, the continuations land in a block of one-line-per-step entries
+/// carrying no attribution at all, and a `reason:` string reads as a stray
+/// step. Indented under a heading they stay attached to the worker they
+/// belong to.
+///
+/// Rendered through [repr], which is where the rule that a report must not
+/// fail while describing a failure already lives: a drawn value with a
+/// throwing `toString` is a thing a rule can produce, and losing the
+/// counterexample over one would be worse than the error being described.
+List<String> _alsoEnded(_Ending ending) {
+  final text = repr(ending.error);
+  return <String>[
+    'Worker ${ending.worker} also ended, with:',
+    for (final String line in text.split('\n')) '  $line',
+  ];
+}
+
 /// Runs [worker]'s round, catching whatever ends it.
 Future<_Ending?> _ending(
   DrawMachine driver,
   List<Rule> rules,
   _Worker worker,
-  _Steps steps,
 ) async {
   try {
-    await _turn(driver, rules, worker, steps);
+    await _turn(driver, rules, worker);
     return null;
   } on Object catch (error, stack) {
     return (worker: worker.index, error: error, stack: stack);
@@ -377,12 +446,7 @@ int _rank(Object error) => switch (error) {
 };
 
 /// Pulls rules for one worker until its round is over.
-Future<void> _turn(
-  DrawMachine driver,
-  List<Rule> rules,
-  _Worker worker,
-  _Steps steps,
-) async {
+Future<void> _turn(DrawMachine driver, List<Rule> rules, _Worker worker) async {
   final testCase = worker.testCase;
   while (true) {
     final index = driver.nextRule(worker.context, worker.index);
@@ -392,20 +456,27 @@ Future<void> _turn(
       driver.ruleRejected(worker.context, worker.index);
       continue;
     }
-    steps.taken++;
-    testCase.note('Step ${steps.taken}: ${rule.name}');
+    // Taken before the rule is announced, so that everything the rule goes
+    // on to say and draw sits after it and comes back off together.
+    final before = testCase.mark;
+    worker.steps++;
+    testCase.note('Step ${worker.steps}: ${rule.name}');
     try {
       await testCase.step(SpanLabel.statefulRule, () => rule.body(testCase));
+      // Once the step has stuck: what it drew is a parameter of step three,
+      // and saying so is the difference between reading a counterexample and
+      // counting positions against the script beside it.
+      testCase.labelDrawsSince(before, 'step ${worker.steps}');
     } on AssumptionFailed {
       // The step turned itself down, or the engine ended the case underneath
       // it. The latch is what tells them apart: an assumption the engine
       // raised is held against the whole case, so there is nothing left to
       // run and this has to go on unwinding.
       if (worker.context.isAborted) rethrow;
-      // Not counted as a step, because it did not take one: the note named a
-      // rule that then declined to run.
-      testCase.undoNote();
-      steps.taken--;
+      // Not counted as a step, because it did not take one -- and neither is
+      // anything it said or drew on the way to finding that out.
+      testCase.rollBackTo(before);
+      worker.steps--;
       driver.ruleRejected(worker.context, worker.index);
     }
   }

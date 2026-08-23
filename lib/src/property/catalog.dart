@@ -1235,6 +1235,12 @@ final class _MapGenerator<K, V> extends Generator<Map<K, V>> {
         // to work through. What the entry's span holds therefore depends on
         // its key, which costs nothing: the same choices produce the same key
         // and so the same decision, which is all a replay needs.
+        //
+        // The one place this package's wire shape differs from the reference
+        // interpreter the other frontends follow, which draws both halves and
+        // discards the value. Worth knowing at an engine bump: if a map pin
+        // in the shrink tests moves and no other pin does, this is the first
+        // thing to look at.
         if (entries.containsKey(key)) return false;
         entries[key] = _values.generate(testCase);
         return true;

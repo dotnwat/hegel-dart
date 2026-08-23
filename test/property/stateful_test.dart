@@ -19,10 +19,21 @@ import '../support/shrink_pin.dart';
 /// where a particular rule comes up at a particular point -- the rejected
 /// one, the one after it, the round that ends.
 final class _ScriptedMachine extends FakeDrawContext implements DrawMachine {
-  _ScriptedMachine(this.rounds);
+  _ScriptedMachine(this.rounds, {this.integers = const <int>[]});
 
   /// The rule indices to hand out, one list per round.
   final List<List<int>> rounds;
+
+  /// What a rule's own draws answer with, in order.
+  final List<int> integers;
+
+  int _nextInteger = 0;
+
+  @override
+  int drawInteger({required int min, required int max}) {
+    calls.add('draw $min..$max');
+    return integers[_nextInteger++];
+  }
 
   /// Whether the engine has ended the case out from under the driver.
   bool aborted = false;
@@ -138,6 +149,54 @@ final class _ConcurrentMachine extends FakeDrawContext implements DrawMachine {
 
   @override
   void dispose() => calls.add('machine freed');
+}
+
+/// A machine whose engine runs out of handles partway through a clone.
+final class _RefusingMachine extends FakeDrawContext implements DrawMachine {
+  _RefusingMachine({required this.refuseAt});
+
+  /// Which clone request is the one that fails.
+  final int refuseAt;
+
+  /// How many of the handles handed out were given back.
+  int released = 0;
+
+  int _cloned = 0;
+
+  @override
+  bool get isAborted => false;
+
+  @override
+  int get concurrency => 4;
+
+  @override
+  ({DrawContext context, void Function() release}) cloneForWorker() {
+    if (_cloned++ == refuseAt) {
+      throw StateError('the engine has no handle to give');
+    }
+    return (context: this, release: () => released++);
+  }
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  }) => this;
+
+  @override
+  int? nextGroup() => null;
+
+  @override
+  int? nextRule(DrawContext from, int worker) => null;
+
+  @override
+  void ruleRejected(DrawContext from, int worker) {}
+
+  @override
+  void dispose() {}
 }
 
 /// A machine built out of the rules and invariants a test hands it.
@@ -341,6 +400,69 @@ void main() {
     });
   });
 
+  group('a rule that turns itself down, having already said something', () {
+    test('leaves nothing of itself in the script', () async {
+      final context = _ScriptedMachine(<List<int>>[
+        <int>[0, 1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('pop', (TestCase tc) {
+            // A note before the precondition is an ordinary thing to write:
+            // it is how a rule says what it was about to do.
+            tc.note('about to pop');
+            tc.assume(false);
+          }),
+          Rule('push', (TestCase tc) {}),
+        ]),
+      );
+
+      // Both lines go, not just the last one. Undoing a single note pops
+      // whatever the body said last and leaves the announcement behind --
+      // which reads as a step that ran and then said nothing.
+      expect(testCase.notes, <String>['Step 1: push']);
+    });
+
+    test('takes its drawn parameters with it, out of both accounts', () async {
+      final context = _ScriptedMachine(
+        <List<int>>[
+          <int>[0, 1],
+        ],
+        integers: <int>[7],
+      );
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('pop', (TestCase tc) {
+            tc.draw(integers(min: 0, max: 99), name: 'by');
+            tc.assume(false);
+          }),
+          Rule('push', (TestCase tc) {}),
+        ]),
+      );
+
+      // A parameter of a step that never happened is not a value the
+      // counterexample was built from, and reporting it as one sends the
+      // reader looking for a step that is not in the script.
+      expect(testCase.draws, isEmpty);
+
+      // And out of the engine's account too, which is the half a test that
+      // only reads the report cannot see. A span closed as kept leaves the
+      // choices in the sequence the reproduce blob replays, so the report
+      // would be describing a case the blob does not produce -- and the
+      // shrinker would go on picking at values printed nowhere.
+      expect(
+        context.calls,
+        containsAllInOrder(<String>['draw 0..99', 'discard', 'rejected']),
+      );
+    });
+  });
+
   group('invariants', () {
     test('are checked before the first rule and after every round', () async {
       final context = _ScriptedMachine(<List<int>>[
@@ -462,9 +584,11 @@ void main() {
 
       // In worker order rather than in the order they finished, because the
       // order they finished in is the thing that will not be the same twice.
+      // Each worker numbers its own script, which is what the tag beside the
+      // number says the line belongs to.
       expect(testCase.notes, <String>[
         '[worker 0] Step 1: push',
-        '[worker 1] Step 2: pop',
+        '[worker 1] Step 1: pop',
       ]);
     });
 
@@ -558,6 +682,71 @@ void main() {
       );
     });
 
+    test('says which worker drew which value', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[0],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('push', (TestCase tc) async {
+            tc.draw(just(7), name: 'by');
+            await Future<void>.delayed(Duration.zero);
+          }),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      // Two workers running one rule produce two values under one name, and
+      // `by = 7` twice leaves the reader to guess which step each belonged
+      // to. The worker answers half of that and the step answers the rest,
+      // since one worker taking three steps would otherwise be back where it
+      // started.
+      expect(testCase.draws.map((Drawn drawn) => drawn.name), <String>[
+        '[worker 0] step 1 by',
+        '[worker 1] step 1 by',
+      ]);
+    });
+
+    test('puts what it has to say about the round after the scripts', () async {
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await expectLater(
+        runStateful(
+          testCase,
+          _Machine(<Rule>[
+            Rule('first', (TestCase tc) async => throw StateError('from 0')),
+            Rule('second', (TestCase tc) async => throw StateError('from 1')),
+          ]),
+          minConcurrency: 2,
+          maxConcurrency: 2,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      // A line about how the round ended, written before the steps it is
+      // about, reads as a preamble to nothing.
+      expect(testCase.notes.first, startsWith('[worker 0]'));
+      expect(
+        testCase.notes.indexWhere(
+          (String note) => note.startsWith('Worker 1 also ended'),
+        ),
+        greaterThan(
+          testCase.notes.lastIndexWhere(
+            (String note) => note.startsWith('[worker '),
+          ),
+        ),
+      );
+    });
+
     test('says so when a second worker also ended badly', () async {
       final context = _ConcurrentMachine(<List<int>>[
         <int>[0],
@@ -580,10 +769,8 @@ void main() {
 
       // One error is raised and the other would otherwise vanish, which would
       // read as though the rest of the round was fine.
-      expect(
-        testCase.notes,
-        contains(contains('Worker 1 also ended with Bad state: from 1')),
-      );
+      expect(testCase.notes, contains('Worker 1 also ended, with:'));
+      expect(testCase.notes, contains('  Bad state: from 1'));
     });
 
     test('keeps the steps of a round that ended badly', () async {
@@ -611,7 +798,32 @@ void main() {
       // The round that ends badly is the one whose script the reader most
       // needs, so a worker's log is taken across however the round ended.
       expect(testCase.notes, contains('[worker 0] Step 1: worked'));
-      expect(testCase.notes, contains('[worker 1] Step 2: failed'));
+      expect(testCase.notes, contains('[worker 1] Step 1: failed'));
+    });
+  });
+
+  group('a worker the engine would not hand over', () {
+    test('does not strand the handles already taken', () async {
+      // A clone refused partway through: the caller's release loop is only
+      // reached once every worker exists, so whatever was taken before the
+      // refusal has nobody left to give it back.
+      final context = _RefusingMachine(refuseAt: 2);
+
+      await expectLater(
+        runStateful(
+          TestCase(context),
+          _Machine(<Rule>[Rule('push', (TestCase tc) {})]),
+          minConcurrency: 4,
+          maxConcurrency: 4,
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        context.released,
+        2,
+        reason: 'both handles taken before the refusal go back',
+      );
     });
   });
 
@@ -671,6 +883,51 @@ void main() {
     );
   });
 
+  group('step numbers under several workers', () {
+    test('run from one, per worker, however rules decline', () async {
+      // Worker 0 announces a step, worker 1 announces the next, and then
+      // worker 0's rule turns itself down. A counter shared between them
+      // cannot be wound back at that point: the number it would give up has
+      // already been passed, and the next step takes one that is spoken for.
+      final context = _ConcurrentMachine(<List<int>>[
+        <int>[0, 1],
+        <int>[1],
+      ]);
+      final testCase = TestCase(context);
+
+      await runStateful(
+        testCase,
+        _Machine(<Rule>[
+          Rule('declines', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+            tc.assume(false);
+          }),
+          Rule('runs', (TestCase tc) async {
+            await Future<void>.delayed(Duration.zero);
+          }),
+        ]),
+        minConcurrency: 2,
+        maxConcurrency: 2,
+      );
+
+      // Read per worker, since that is whose script it is once the notes
+      // carry a tag saying so. Each one has to run from one without gaps: a
+      // script that opens at step two is a reader looking for a step one
+      // that was taken by somebody else.
+      for (final String tag in <String>['[worker 0]', '[worker 1]']) {
+        final mine = <int>[
+          for (final String note in testCase.notes)
+            if (note.startsWith('$tag Step '))
+              int.parse(note.split('Step ')[1].split(':')[0]),
+        ];
+        expect(mine, isNotEmpty, reason: '$tag took no step');
+        expect(mine, <int>[
+          for (var n = 1; n <= mine.length; n++) n,
+        ], reason: '$tag numbered its steps $mine');
+      }
+    });
+  });
+
   group('a planted bug', () {
     test('is found, and shrunk to the shortest script that shows it', () async {
       final report = await shrunkReport((TestCase testCase) async {
@@ -684,8 +941,11 @@ void main() {
       expect(report, contains('Step 1: increment'));
       expect(report, contains('Step 2: increment'));
       expect(report, isNot(contains('Step 3:')));
-      expect(report, contains('by = 1'));
-      expect(report, contains('by = 10'));
+      // Named by the step that drew them, which is what makes a two-step
+      // script legible: without it these are `by = 1` and `by = 10` with
+      // nothing saying which increment was which.
+      expect(report, contains('step 1 by = 1'));
+      expect(report, contains('step 2 by = 10'));
       expect(report, contains("Invariant 'matches the model' does not hold"));
     });
   });

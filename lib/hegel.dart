@@ -26,7 +26,7 @@ export 'src/libhegel/settings.dart'
         Verbosity,
         everyHealthCheck,
         everyPhase;
-export 'src/property/generator.dart';
+export 'src/property/generator.dart' hide nativeStringGeneratorCount;
 export 'src/property/property.dart' show property;
 export 'src/property/runner.dart' show PropertyError, runProperty;
 export 'src/property/stateful.dart'

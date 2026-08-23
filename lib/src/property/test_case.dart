@@ -16,6 +16,28 @@ import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
 
+/// Runs every one of [releases], and raises the first that would not.
+///
+/// Cleanup runs while something else is usually already unwinding, so the
+/// order matters more than it looks: stopping at the first failure strands
+/// every handle behind it, and those have no second chance. Everything is
+/// tried, then the first failure is raised -- which is still loud, and no
+/// longer loud at the cost of the rest.
+@internal
+void releaseEach(Iterable<void Function()> releases) {
+  Object? first;
+  StackTrace? firstStack;
+  for (final void Function() release in releases) {
+    try {
+      release();
+    } on Object catch (error, stack) {
+      first ??= error;
+      firstStack ??= stack;
+    }
+  }
+  if (first != null) Error.throwWithStackTrace(first, firstStack!);
+}
+
 /// One value the body drew, as the report will show it.
 ///
 /// The name is the one the body gave the draw, or null when it gave none, in
@@ -487,14 +509,16 @@ final class TestCase {
   ///
   /// Called by the runner when the case is over. Everything is released even
   /// if one of them throws, because a handle left behind is a handle left
-  /// behind whatever the reason.
+  /// behind whatever the reason -- so each is tried, and the first failure is
+  /// raised once there is nothing left to strand. That order is the whole
+  /// point: a bare loop stops at the first bad callback, and the resources
+  /// after it are lost with no way to ask for them again, the list having
+  /// already been cleared.
   @internal
   void release() {
     final pending = List<void Function()>.of(_releases);
     _releases.clear();
-    for (final void Function() release in pending) {
-      release();
-    }
+    releaseEach(pending);
   }
 
   /// Draws a value from [generator].
@@ -548,13 +572,28 @@ final class TestCase {
   ///
   /// Asynchronous, since a rule body is: the span stays open across an await,
   /// which is what the engine expects of a case that is still running.
+  ///
+  /// A step that turns itself down closes its span as discarded, the way
+  /// [attempt] closes a filtered draw. The engine then drops what it drew
+  /// instead of carrying it around for the rest of the case -- which matters
+  /// twice over, because the caller also takes such a step back out of the
+  /// report. Closed as kept, the choices would stay in the sequence the
+  /// reproduce blob replays while the counterexample said nothing about them,
+  /// and the shrinker would be left picking at values that appear nowhere.
+  ///
+  /// Only an assumption discards. Anything else the body throws is the
+  /// property failing, and those draws are the counterexample.
   @internal
   Future<T> step<T>(SpanLabel label, FutureOr<T> Function() body) async {
     _context.startSpan(label);
+    var kept = true;
     try {
       return await body();
+    } on AssumptionFailed {
+      kept = false;
+      rethrow;
     } finally {
-      _context.stopSpan();
+      _context.stopSpan(discard: !kept);
     }
   }
 
@@ -632,15 +671,62 @@ final class TestCase {
   void target(double value, {String label = 'target'}) =>
       _context.target(value, label: label);
 
-  /// Takes back the last thing [note] recorded.
+  /// How much of this case's report has been written so far.
   ///
-  /// For a step that was announced and then did not happen: the driver names
-  /// a rule before running it, because the name is what makes a failure
-  /// inside it readable, and a rule that turns itself down leaves a line
-  /// about a step that no one took.
+  /// Paired with [rollBackTo], for work that is announced before anyone knows
+  /// whether it will happen: the stateful driver names a rule before running
+  /// it, because the name is what makes a failure inside it readable, and a
+  /// rule that then turns itself down has to leave nothing behind.
+  ///
+  /// A position rather than a count of things to undo, because a rule that
+  /// declines may have said and drawn anything at all first. Undoing one note
+  /// takes back whatever the body said last, which is the wrong line, and
+  /// takes back nothing it drew -- leaving the parameters of a step that
+  /// never happened among the values the counterexample is made of.
   @internal
-  void undoNote() {
-    if (_notes.isNotEmpty) _notes.removeLast();
+  ({int draws, int notes}) get mark =>
+      (draws: _draws.length, notes: _notes.length);
+
+  /// Labels every draw made since [mark] with [label].
+  ///
+  /// What makes a stateful counterexample readable. A rule with a drawn
+  /// parameter, run three times, otherwise reports `by` three times over with
+  /// nothing saying which step each belonged to -- and matching them up by
+  /// counting positions against a separate block of notes is not reading, it
+  /// is arithmetic.
+  ///
+  /// A draw that was never named is left alone. There is nothing to qualify,
+  /// and a label with no name under it says which step made *a* value without
+  /// saying which value, so several in one step would come back
+  /// indistinguishable. Naming the draw is what fixes those, and is worth
+  /// doing for the same reason this exists.
+  @internal
+  void labelDrawsSince(({int draws, int notes}) mark, String label) {
+    for (var at = mark.draws; at < _draws.length; at++) {
+      final Drawn drawn = _draws[at];
+      if (drawn.name == null) continue;
+      _draws[at] = (name: '$label ${drawn.name}', value: drawn.value);
+    }
+  }
+
+  /// Drops the draws and notes recorded since [mark].
+  ///
+  /// Those two and no more, which is all a case keeps: what a body did to the
+  /// engine or to the world on its way to declining is done. An observation
+  /// reported with [target] has reached the engine, and a resource registered
+  /// with [onRelease] is still registered and still released when the case
+  /// ends. Neither is a thing to undo, but neither is a thing this takes back
+  /// either, and a rule that targets and then declines has recorded that
+  /// label -- which the engine expects at most once a case.
+  ///
+  /// Unguarded on purpose: `removeRange` over an empty range is a no-op, so a
+  /// mark at the end costs nothing, and a mark that could not be honoured
+  /// should be a range error rather than a silent return that leaves a
+  /// declined step's parameters in the counterexample.
+  @internal
+  void rollBackTo(({int draws, int notes}) mark) {
+    _draws.removeRange(mark.draws, _draws.length);
+    _notes.removeRange(mark.notes, _notes.length);
   }
 
   /// Takes what [worker] drew and noted into this case, tagged with [tag].
@@ -651,12 +737,37 @@ final class TestCase {
   /// across in worker order with a tag saying whose they were -- which is the
   /// only honest account of a run whose whole point is that the order was not
   /// fixed.
+  ///
+  /// Drawn values are tagged the same way, and for the same reason: two
+  /// workers running one rule produce two values under one name, and a report
+  /// that showed `by = 1` twice would leave the reader to guess whose it was.
+  ///
+  /// A draw that was never named is left alone, and is the worse for it. It
+  /// falls back to its position, and the position it falls back to is the one
+  /// it ends up at *here* -- so it depends on how much the body drew before
+  /// the machine started and on how many draws every earlier worker made, and
+  /// adding one draw anywhere ahead of it renumbers it. There is no honest
+  /// label to give it: a tag with no name under it would say which worker
+  /// made some value without saying which value. Naming the draw is the fix,
+  /// and this is the case that most needs it.
   @internal
   void absorb(TestCase worker, String tag) {
+    // At one worker the driver makes the root case its own worker, and a case
+    // absorbing itself would walk the very lists it is appending to. The
+    // driver does not call this then -- but that guard sits in another file
+    // and reads like an optimisation, so the invariant is stated here too,
+    // where breaking it would raise a ConcurrentModificationError out of a
+    // finally and replace whatever the round was really failing over.
+    if (identical(worker, this)) return;
     for (final String note in worker._notes) {
       _notes.add('$tag $note');
     }
-    _draws.addAll(worker._draws);
+    for (final Drawn drawn in worker._draws) {
+      _draws.add((
+        name: drawn.name == null ? null : '$tag ${drawn.name}',
+        value: drawn.value,
+      ));
+    }
     worker._notes.clear();
     worker._draws.clear();
   }

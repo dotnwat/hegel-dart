@@ -189,6 +189,68 @@ void main() {
     });
   });
 
+  group('releasing a case', () {
+    test('runs every callback even when one of them throws', () {
+      final testCase = TestCase(ScriptedContext(<int>[]));
+      final ran = <String>[];
+
+      testCase.onRelease(() => ran.add('first'));
+      testCase.onRelease(() => throw StateError('this one is broken'));
+      testCase.onRelease(() => ran.add('third'));
+
+      // Loud, but not loud at the cost of the rest: a bare loop stops here
+      // and strands everything after, with the list already cleared so
+      // nobody can ask for them again.
+      expect(testCase.release, throwsA(isA<StateError>()));
+      expect(ran, <String>['first', 'third']);
+    });
+
+    test('raises the first failure, not the last', () {
+      final testCase = TestCase(ScriptedContext(<int>[]))
+        ..onRelease(() => throw StateError('first'))
+        ..onRelease(() => throw StateError('second'));
+
+      expect(
+        testCase.release,
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            'first',
+          ),
+        ),
+      );
+    });
+
+    test('is idempotent, so a path that ran already may run again', () {
+      final testCase = TestCase(ScriptedContext(<int>[]));
+      var released = 0;
+      testCase.onRelease(() => released++);
+
+      testCase
+        ..release()
+        ..release();
+
+      expect(released, 1);
+    });
+  });
+
+  group('absorbing a case', () {
+    test('does nothing when it is asked to absorb itself', () {
+      // The driver makes the root case its own worker at concurrency one and
+      // does not call this then -- but that guard is in another file and
+      // reads like an optimisation, and walking the list being appended to
+      // would raise out of a finally and replace whatever really failed.
+      final testCase = TestCase(ScriptedContext(<int>[]))
+        ..note('one')
+        ..note('two');
+
+      testCase.absorb(testCase, '[worker 0]');
+
+      expect(testCase.notes, <String>['one', 'two']);
+    });
+  });
+
   group('a test case over the engine', () {
     // The scripted context pins the bookkeeping; this pins that the seam is
     // wired to a real engine. What it cannot pin is the engine rejecting an
