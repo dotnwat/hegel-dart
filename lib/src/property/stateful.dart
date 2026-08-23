@@ -5,6 +5,7 @@ import 'dart:async';
 
 import '../libhegel/errors.dart';
 import '../libhegel/span.dart';
+import 'reporting.dart';
 import 'test_case.dart';
 
 /// One thing a stateful test can do.
@@ -357,16 +358,44 @@ Future<void> _round(
   // What the others said is not thrown away: a second worker failing at the
   // same moment is a second thing wrong, and a report that mentioned only the
   // one that won would read as though the rest of the run was fine.
-  for (final _Ending dropped in raised.skip(1)) {
+  // In worker order, not in the order precedence put them. These lines are
+  // written directly beneath a block of scripts that is in worker order, and
+  // the only reading available for two-before-one is "the order they finished
+  // in" -- the one inference every other line of this report exists to avoid
+  // implying.
+  final dropped = raised.skip(1).toList()
+    ..sort((_Ending a, _Ending b) => a.worker.compareTo(b.worker));
+  for (final _Ending ending in dropped) {
     // Not tagged as a worker's own line: it is not one worker's step, it is
     // the account of a round that ended two ways at once.
-    aside.add('Worker ${dropped.worker} also ended with ${dropped.error}');
+    aside.addAll(_alsoEnded(ending));
   }
   Error.throwWithStackTrace(winner.error, winner.stack);
 }
 
 /// How one worker's round ended, or null if it simply finished.
 typedef _Ending = ({int worker, Object error, StackTrace stack});
+
+/// The lines saying that [ending] also happened.
+///
+/// Lines, plural, because the error a rule actually raises is usually an
+/// `expect` mismatch, whose text runs to three or four of them. Written as
+/// one, the continuations land in a block of one-line-per-step entries
+/// carrying no attribution at all, and a `reason:` string reads as a stray
+/// step. Indented under a heading they stay attached to the worker they
+/// belong to.
+///
+/// Rendered through [repr], which is where the rule that a report must not
+/// fail while describing a failure already lives: a drawn value with a
+/// throwing `toString` is a thing a rule can produce, and losing the
+/// counterexample over one would be worse than the error being described.
+List<String> _alsoEnded(_Ending ending) {
+  final text = repr(ending.error);
+  return <String>[
+    'Worker ${ending.worker} also ended, with:',
+    for (final String line in text.split('\n')) '  $line',
+  ];
+}
 
 /// Runs [worker]'s round, catching whatever ends it.
 Future<_Ending?> _ending(
@@ -422,6 +451,10 @@ Future<void> _turn(DrawMachine driver, List<Rule> rules, _Worker worker) async {
     testCase.note('Step ${worker.steps}: ${rule.name}');
     try {
       await testCase.step(SpanLabel.statefulRule, () => rule.body(testCase));
+      // Once the step has stuck: what it drew is a parameter of step three,
+      // and saying so is the difference between reading a counterexample and
+      // counting positions against the script beside it.
+      testCase.labelDrawsSince(before, 'step ${worker.steps}');
     } on AssumptionFailed {
       // The step turned itself down, or the engine ended the case underneath
       // it. The latch is what tells them apart: an assumption the engine

@@ -703,10 +703,12 @@ void main() {
 
       // Two workers running one rule produce two values under one name, and
       // `by = 7` twice leaves the reader to guess which step each belonged
-      // to.
+      // to. The worker answers half of that and the step answers the rest,
+      // since one worker taking three steps would otherwise be back where it
+      // started.
       expect(testCase.draws.map((Drawn drawn) => drawn.name), <String>[
-        '[worker 0] by',
-        '[worker 1] by',
+        '[worker 0] step 1 by',
+        '[worker 1] step 1 by',
       ]);
     });
 
@@ -732,8 +734,17 @@ void main() {
 
       // A line about how the round ended, written before the steps it is
       // about, reads as a preamble to nothing.
-      expect(testCase.notes.last, startsWith('Worker 1 also ended with'));
       expect(testCase.notes.first, startsWith('[worker 0]'));
+      expect(
+        testCase.notes.indexWhere(
+          (String note) => note.startsWith('Worker 1 also ended'),
+        ),
+        greaterThan(
+          testCase.notes.lastIndexWhere(
+            (String note) => note.startsWith('[worker '),
+          ),
+        ),
+      );
     });
 
     test('says so when a second worker also ended badly', () async {
@@ -758,10 +769,8 @@ void main() {
 
       // One error is raised and the other would otherwise vanish, which would
       // read as though the rest of the round was fine.
-      expect(
-        testCase.notes,
-        contains(contains('Worker 1 also ended with Bad state: from 1')),
-      );
+      expect(testCase.notes, contains('Worker 1 also ended, with:'));
+      expect(testCase.notes, contains('  Bad state: from 1'));
     });
 
     test('keeps the steps of a round that ended badly', () async {
@@ -932,8 +941,11 @@ void main() {
       expect(report, contains('Step 1: increment'));
       expect(report, contains('Step 2: increment'));
       expect(report, isNot(contains('Step 3:')));
-      expect(report, contains('by = 1'));
-      expect(report, contains('by = 10'));
+      // Named by the step that drew them, which is what makes a two-step
+      // script legible: without it these are `by = 1` and `by = 10` with
+      // nothing saying which increment was which.
+      expect(report, contains('step 1 by = 1'));
+      expect(report, contains('step 2 by = 10'));
       expect(report, contains("Invariant 'matches the model' does not hold"));
     });
   });

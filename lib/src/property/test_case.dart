@@ -687,6 +687,28 @@ final class TestCase {
   ({int draws, int notes}) get mark =>
       (draws: _draws.length, notes: _notes.length);
 
+  /// Labels every draw made since [mark] with [label].
+  ///
+  /// What makes a stateful counterexample readable. A rule with a drawn
+  /// parameter, run three times, otherwise reports `by` three times over with
+  /// nothing saying which step each belonged to -- and matching them up by
+  /// counting positions against a separate block of notes is not reading, it
+  /// is arithmetic.
+  ///
+  /// A draw that was never named is left alone. There is nothing to qualify,
+  /// and a label with no name under it says which step made *a* value without
+  /// saying which value, so several in one step would come back
+  /// indistinguishable. Naming the draw is what fixes those, and is worth
+  /// doing for the same reason this exists.
+  @internal
+  void labelDrawsSince(({int draws, int notes}) mark, String label) {
+    for (var at = mark.draws; at < _draws.length; at++) {
+      final Drawn drawn = _draws[at];
+      if (drawn.name == null) continue;
+      _draws[at] = (name: '$label ${drawn.name}', value: drawn.value);
+    }
+  }
+
   /// Drops everything recorded since [mark].
   @internal
   void rollBackTo(({int draws, int notes}) mark) {
