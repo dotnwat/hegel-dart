@@ -276,6 +276,19 @@ void _registerLate(Zone host, String what, Object error, StackTrace stack) =>
 /// doing, so the blame moves and nothing of the exception is dropped: with
 /// no bad request to point at, the operation and code are the report, and
 /// they survive even a failure the engine had no words for.
+///
+/// The callers match on the public type, and that is safe because the type
+/// does not travel: [HegelException] is deliberately not exported, so
+/// through the public API only the engine raises one, and code under test
+/// cannot throw one by accident. A body can still produce one by importing
+/// this package's internals -- the fault-arm tests do exactly that -- and a
+/// body that reaches past the public surface is read as the engine it is
+/// impersonating. This is the same boundary `lib/hegel.dart` draws from the
+/// other side, where which signal types are nameable is decided export by
+/// export. The catalog's own refusals stay on the other side of the line:
+/// an [ArgumentError] raised where a generator was written is Dart code
+/// throwing, indistinguishable from the code under test doing the same, so
+/// it remains a counterexample.
 String _engineComplaint(HegelException error) => switch (error.code) {
   HegelResultCode.invalidArg =>
     'asked the engine for something it refused: ${error.message}',
