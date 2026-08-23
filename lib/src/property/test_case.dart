@@ -16,6 +16,28 @@ import '../libhegel/string_generator.dart';
 import '../libhegel/test_case.dart' as engine;
 import 'generator.dart';
 
+/// Runs every one of [releases], and raises the first that would not.
+///
+/// Cleanup runs while something else is usually already unwinding, so the
+/// order matters more than it looks: stopping at the first failure strands
+/// every handle behind it, and those have no second chance. Everything is
+/// tried, then the first failure is raised -- which is still loud, and no
+/// longer loud at the cost of the rest.
+@internal
+void releaseEach(Iterable<void Function()> releases) {
+  Object? first;
+  StackTrace? firstStack;
+  for (final void Function() release in releases) {
+    try {
+      release();
+    } on Object catch (error, stack) {
+      first ??= error;
+      firstStack ??= stack;
+    }
+  }
+  if (first != null) Error.throwWithStackTrace(first, firstStack!);
+}
+
 /// One value the body drew, as the report will show it.
 ///
 /// The name is the one the body gave the draw, or null when it gave none, in
@@ -487,14 +509,16 @@ final class TestCase {
   ///
   /// Called by the runner when the case is over. Everything is released even
   /// if one of them throws, because a handle left behind is a handle left
-  /// behind whatever the reason.
+  /// behind whatever the reason -- so each is tried, and the first failure is
+  /// raised once there is nothing left to strand. That order is the whole
+  /// point: a bare loop stops at the first bad callback, and the resources
+  /// after it are lost with no way to ask for them again, the list having
+  /// already been cleared.
   @internal
   void release() {
     final pending = List<void Function()>.of(_releases);
     _releases.clear();
-    for (final void Function() release in pending) {
-      release();
-    }
+    releaseEach(pending);
   }
 
   /// Draws a value from [generator].
@@ -691,6 +715,13 @@ final class TestCase {
   /// nothing else would trade an ambiguous label for a useless one.
   @internal
   void absorb(TestCase worker, String tag) {
+    // At one worker the driver makes the root case its own worker, and a case
+    // absorbing itself would walk the very lists it is appending to. The
+    // driver does not call this then -- but that guard sits in another file
+    // and reads like an optimisation, so the invariant is stated here too,
+    // where breaking it would raise a ConcurrentModificationError out of a
+    // finally and replace whatever the round was really failing over.
+    if (identical(worker, this)) return;
     for (final String note in worker._notes) {
       _notes.add('$tag $note');
     }

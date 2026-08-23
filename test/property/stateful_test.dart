@@ -151,6 +151,54 @@ final class _ConcurrentMachine extends FakeDrawContext implements DrawMachine {
   void dispose() => calls.add('machine freed');
 }
 
+/// A machine whose engine runs out of handles partway through a clone.
+final class _RefusingMachine extends FakeDrawContext implements DrawMachine {
+  _RefusingMachine({required this.refuseAt});
+
+  /// Which clone request is the one that fails.
+  final int refuseAt;
+
+  /// How many of the handles handed out were given back.
+  int released = 0;
+
+  int _cloned = 0;
+
+  @override
+  bool get isAborted => false;
+
+  @override
+  int get concurrency => 4;
+
+  @override
+  ({DrawContext context, void Function() release}) cloneForWorker() {
+    if (_cloned++ == refuseAt) {
+      throw StateError('the engine has no handle to give');
+    }
+    return (context: this, release: () => released++);
+  }
+
+  @override
+  DrawMachine startStateMachine({
+    required List<String> ruleNames,
+    required List<int> ruleGroups,
+    required List<String> invariantNames,
+    required int minConcurrency,
+    required int maxConcurrency,
+  }) => this;
+
+  @override
+  int? nextGroup() => null;
+
+  @override
+  int? nextRule(DrawContext from, int worker) => null;
+
+  @override
+  void ruleRejected(DrawContext from, int worker) {}
+
+  @override
+  void dispose() {}
+}
+
 /// A machine built out of the rules and invariants a test hands it.
 final class _Machine extends StateMachine {
   _Machine(this.rules, {this.invariants = const <Invariant>[]});
@@ -742,6 +790,31 @@ void main() {
       // needs, so a worker's log is taken across however the round ended.
       expect(testCase.notes, contains('[worker 0] Step 1: worked'));
       expect(testCase.notes, contains('[worker 1] Step 1: failed'));
+    });
+  });
+
+  group('a worker the engine would not hand over', () {
+    test('does not strand the handles already taken', () async {
+      // A clone refused partway through: the caller's release loop is only
+      // reached once every worker exists, so whatever was taken before the
+      // refusal has nobody left to give it back.
+      final context = _RefusingMachine(refuseAt: 2);
+
+      await expectLater(
+        runStateful(
+          TestCase(context),
+          _Machine(<Rule>[Rule('push', (TestCase tc) {})]),
+          minConcurrency: 4,
+          maxConcurrency: 4,
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        context.released,
+        2,
+        reason: 'both handles taken before the refusal go back',
+      );
     });
   });
 
