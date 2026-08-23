@@ -76,6 +76,11 @@ abstract base class FakeDrawContext implements DrawContext {
   @override
   Uint8List drawIpv6() => _unscripted('an ipv6 address');
 
+  // No engine behind a fake, so nothing that needs a handle can be driven
+  // through one -- which is the honest answer rather than a missing method.
+  @override
+  engine.TestCase? get engineCase => null;
+
   // A fake is not aborted: the latch belongs to a real case, and a test that
   // wants one says so by overriding this.
   @override

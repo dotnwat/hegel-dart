@@ -1,78 +1,69 @@
-/// Drives a property test through the libhegel bindings directly.
-///
-/// A port of the engine's own `echo.c`: draw an integer in range, check it is
-/// in range, and report the run. It uses the internal bindings layer, since
-/// the property-testing API those will support does not exist yet -- so this
-/// shows what the bindings make possible, not what using hegel will look like.
+/// Property-based testing with hegel, in a script you can run.
 ///
 ///     dart run example/echo.dart
+///
+/// Properties are normally written with `property()`, which registers an
+/// ordinary `package:test` test -- that is what the README shows and what you
+/// want in a suite. This file uses `runProperty`, the same runner without
+/// package:test around it, so that it runs under `dart run` and can show you
+/// what a failure looks like without failing anything.
 library;
 
 import 'dart:io';
 
-import 'package:hegel/src/libhegel/libhegel.dart';
+import 'package:hegel/hegel.dart';
 
-void main() {
-  final session = Libhegel.instance;
-  stdout.writeln('libhegel ${session.engineVersion}');
+/// A short, quiet run, and no database: an example that remembered a
+/// counterexample would behave differently the second time you ran it.
+const Settings settings = Settings(
+  testCases: 200,
+  database: Database.disabled,
+  verbosity: Verbosity.quiet,
+);
 
-  final run = Run.start(
-    const Settings(
-      testCases: 50,
-      seed: 42,
-      derandomize: true,
-      database: Database.disabled,
-      verbosity: Verbosity.quiet,
-    ),
-    onOutput: stderr.writeln,
-  );
+Future<void> main() async {
+  stdout.writeln('hegel: a property that holds');
+  await runProperty((TestCase testCase) {
+    // Draw a list of small integers, sort a copy, and check the copy is a
+    // rearrangement of the original rather than something shorter.
+    final numbers = testCase.draw(
+      lists(integers(min: 0, max: 100)),
+      name: 'numbers',
+    );
+    final sorted = numbers.toList()..sort();
+    if (sorted.length != numbers.length) {
+      throw StateError('sorting lost something: $numbers became $sorted');
+    }
+  }, settings: settings);
+  stdout.writeln('  held over ${settings.testCases} cases\n');
 
-  var valid = 0;
+  stdout.writeln('hegel: a property that does not');
   try {
-    while (true) {
-      final testCase = run.nextTestCase();
-      if (testCase == null) break;
-      try {
-        final value = testCase.drawInteger(min: 0, max: 100);
-        if (value < 0 || value > 100) {
-          // The engine groups failures by origin, so it has to be stable.
-          testCase.markComplete(
-            TestCaseStatus.interesting,
-            origin: 'echo: out of range',
+    await runProperty(
+      (TestCase testCase) {
+        // Nearly true: join a list of words with a comma, split it again, get
+        // the list back. The engine will find where "nearly" lives.
+        final words = testCase.draw(
+          lists(text(maxLength: 4, maxCodepoint: 0x7a)),
+          name: 'words',
+        );
+        final roundTripped = words.join(',').split(',');
+        if (roundTripped.length != words.length) {
+          // Counted rather than printed: a list holding one empty string
+          // prints as `[]`, which is also what the empty list prints as, and
+          // an example whose message is ambiguous teaches the wrong lesson.
+          throw StateError(
+            'joining ${words.length} words and splitting gave back '
+            '${roundTripped.length}',
           );
-        } else {
-          valid++;
-          testCase.markComplete(TestCaseStatus.valid);
         }
-      } on StopTest {
-        // The engine ran out of budget mid-case: inconclusive, not a failure.
-        testCase.markComplete(TestCaseStatus.overrun);
-      } finally {
-        // Every handle is freed exactly once, by whoever asked for it.
-        testCase.dispose();
-      }
-    }
-
-    final result = run.result();
-    try {
-      stdout.writeln('ran $valid valid test cases, ${result.status.name}');
-      for (var i = 0; i < result.failureCount; i++) {
-        final failure = result.failure(i);
-        try {
-          stdout.writeln('  failure: ${failure.origin}');
-          stdout.writeln('  replay with: ${failure.reproductionBlob}');
-        } finally {
-          failure.dispose();
-        }
-      }
-      if (result.status == RunStatus.error) {
-        stderr.writeln('run error: ${result.error}');
-      }
-      exitCode = result.status == RunStatus.passed ? 0 : 1;
-    } finally {
-      result.dispose();
-    }
-  } finally {
-    run.dispose();
+      },
+      settings: settings,
+      // Where the counterexample goes. Inside a test this defaults to
+      // package:test's on-failure buffer, so a property that holds is silent.
+      onDiagnostic: (String line) => stdout.writeln('  $line'),
+    );
+  } on Object catch (error) {
+    stdout.writeln('  $error');
   }
 }

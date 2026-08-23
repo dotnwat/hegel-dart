@@ -197,6 +197,18 @@ abstract interface class DrawContext {
   /// Records [value] under [label] as something to steer toward.
   void target(double value, {required String label});
 
+  /// The engine handle this context draws through, or null when there is no
+  /// engine behind it.
+  ///
+  /// The engine-backed pool and state machine are driven through a test-case
+  /// handle rather than through a context, and the handle they need is
+  /// whichever one the worker asking is drawing from. Asked for by name here
+  /// rather than recovered by casting the context: a context that wraps
+  /// another -- an audit counting spans, a diagnostic tracing draws -- is a
+  /// reasonable thing to write, and a cast makes writing one impossible for
+  /// no reason anybody would guess from the error.
+  engine.TestCase? get engineCase;
+
   /// Whether a signal has already ended this case.
   ///
   /// True once a draw has raised, and the reason the stateful driver can tell
@@ -324,6 +336,9 @@ final class EngineDrawContext implements DrawContext {
   Uint8List drawIpv6() => testCase.drawIpv6();
 
   @override
+  engine.TestCase get engineCase => testCase;
+
+  @override
   bool get isAborted => testCase.family.abort != null;
 
   @override
@@ -395,31 +410,27 @@ final class _EngineCollection implements DrawCollection {
 }
 
 /// A [DrawPool] backed by a real engine pool.
+///
+/// A pool belongs to a test-case family and only a handle of that family can
+/// drive it, so a pool the engine made is only ever driven by a context over
+/// the engine -- the root case that created it, or a worker's clone of that
+/// same case. That is what the `!` below rests on: a context with no engine
+/// behind it cannot have made this, and being handed one would be a mistake
+/// in this package rather than anything a caller can cause.
 final class _EnginePool implements DrawPool {
   _EnginePool(this._pool);
 
   final engine.Pool _pool;
 
   @override
-  int add(DrawContext from) => _pool.add(_caseOf(from));
+  int add(DrawContext from) => _pool.add(from.engineCase!);
 
   @override
   int draw(DrawContext from, {required bool consume}) =>
-      _pool.draw(_caseOf(from), consume: consume);
+      _pool.draw(from.engineCase!, consume: consume);
 
   @override
   void dispose() => _pool.dispose();
-
-  /// The engine case behind [from].
-  ///
-  /// A pool belongs to a test-case family and only a handle of that family
-  /// can drive it, so a pool the engine made is only ever driven by a context
-  /// over the engine -- the root case that created it, or a worker's clone of
-  /// that same case. Anything else is a pool handed to a context that could
-  /// not have made it, which is a mistake in this package rather than
-  /// something a caller can cause.
-  engine.TestCase _caseOf(DrawContext from) =>
-      (from as EngineDrawContext).testCase;
 }
 
 /// A [DrawMachine] backed by a real engine state machine.
@@ -440,18 +451,14 @@ final class _EngineMachine implements DrawMachine {
 
   @override
   int? nextRule(DrawContext from, int worker) =>
-      _machine.nextRule(_caseOf(from), worker);
+      _machine.nextRule(from.engineCase!, worker);
 
   @override
   void ruleRejected(DrawContext from, int worker) =>
-      _machine.ruleRejected(_caseOf(from), worker);
+      _machine.ruleRejected(from.engineCase!, worker);
 
   @override
   void dispose() => _machine.dispose();
-
-  /// The engine case behind [from]; see [_EnginePool._caseOf].
-  engine.TestCase _caseOf(DrawContext from) =>
-      (from as EngineDrawContext).testCase;
 }
 
 /// One test case, as a property body sees it.

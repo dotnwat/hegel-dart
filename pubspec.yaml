@@ -1,8 +1,8 @@
 name: hegel
 description: >-
-  Property-based testing for Dart, powered by the Hegel engine: generation,
-  shrinking, and replay of failing examples via native libhegel bindings.
-version: 0.1.0-dev
+  Property-based testing for Dart, powered by the Hegel engine. Generators,
+  shrinking, stateful and concurrent testing, and replay of failures.
+version: 0.1.0
 repository: https://github.com/dotnwat/hegel-dart
 issue_tracker: https://github.com/dotnwat/hegel-dart/issues
 homepage: https://hegel.dev

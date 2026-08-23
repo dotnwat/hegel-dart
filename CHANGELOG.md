@@ -1,23 +1,62 @@
 # Changelog
 
-## 0.1.0-dev
+## 0.1.0
 
-Unreleased. The libhegel FFI bindings, built from the bottom up.
+First release.
 
-- Engine distribution through a build hook: the pinned release is downloaded,
-  verified against a checked-in SHA-256, staged, and published as a code asset,
-  with a local-engine override via pub user-defines.
-- Generated raw bindings for the whole C ABI, checked in and drift-checked
-  against the vendored header.
-- A safe layer over the engine: sessions, settings, runs, test cases, every
-  draw primitive, spans, collections, pools, state machines, targeting,
-  failures, and blob replay.
-- Concurrent stateful testing across isolates, with handle borrowing that keeps
-  ownership in the coordinator.
-- Engine output delivered to Dart through a callback.
+### Writing properties
 
-The first slice of the public API on top of them: `property()` and
-`runProperty()`, a `TestCase` to draw from, the `integers()` generator, named
-draws and the failure report, settings and their environment overrides, and
-`reproduce:` for replaying a counterexample from a blob. The generator catalog
-is deliberately one entry long so far; see `docs/property-testing-plan.md`.
+- `property()` registers an ordinary `package:test` test, so groups, `-N`,
+  tags, skips and the IDE's run button all work on it. `runProperty()` is the
+  same runner for harnesses that are not `package:test`.
+- Draw with `tc.draw(generator, name: ...)`, narrow a case with `tc.assume`,
+  explain one with `tc.note`, and steer generation with `tc.target`.
+- Failures are reported as the error your own `expect` raised, with its own
+  stack, under the counterexample the engine shrank to. A run that finds
+  several distinct bugs reports all of them.
+- Counterexamples are kept in an example database and replayed ahead of
+  anything new, so a property keeps failing until the bug is fixed;
+  `reproduce:` replays one from a blob, which is how a CI failure comes back
+  to a machine with a debugger.
+- `HEGEL_TEST_CASES` and `HEGEL_DATABASE` override a run without editing it.
+
+### Generators
+
+- Numbers, text, and time: `integers`, `bigIntegers`, `doubles`, `booleans`,
+  `durations`, `text`, `characters`, `fromRegex`, `emails`, `urls`, `domains`,
+  `bytes`, `dates`, `times`, `dateTimes`, `uuids`, `ipAddresses`.
+- Collections: `lists` with optional uniqueness, `sets`, `maps`, all with
+  length bounds.
+- Composition: `map`, `where`, `flatMap` on every generator, plus `just`,
+  `sampledFrom`, `oneOf`, `optional`, `tuple2`–`tuple4`, `composite`, and
+  `deferred` for recursive shapes.
+- `package:hegel/generators.dart` is the catalog on its own, for prefixing.
+
+### Stateful testing
+
+- `StateMachine`, `Rule`, `Invariant` and `runStateful`: the engine picks the
+  rules, and shrinks the *sequence* to the shortest script that still breaks
+  an invariant.
+- `Rule.precondition` keeps a rule off the table until it can run; `Pool<T>`
+  holds what one step made for a later step to act on, and the engine chooses
+  and shrinks over which.
+- `maxConcurrency:` above one runs the rules several at a time, interleaving at
+  every `await` in a rule body, with each worker's steps tagged in the report.
+  `Rule.group` says what may overlap with what.
+
+### The engine
+
+- Distributed through a build hook: the pinned release is downloaded, verified
+  against a checked-in SHA-256, and published as a code asset, with a
+  local-engine override via pub user-defines. Nothing to install.
+- Linux x64 and arm64, macOS arm64, Windows x64 and arm64 — the targets
+  hegel-rust publishes.
+- Use `dart build cli` rather than `dart compile exe` to bundle an application
+  that depends on this package; `dart run` and `dart test` need nothing.
+
+### Notes
+
+- Pure-Dart properties run under `flutter test` today. Widget-level property
+  testing is planned as a separate `hegel_flutter` package, because
+  `flutter_test` pins `test_api` exactly.
+- Requires Dart 3.13 or later, for build hooks and code assets.
