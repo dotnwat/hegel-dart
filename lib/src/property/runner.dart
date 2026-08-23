@@ -103,19 +103,15 @@ Future<void> runProperty(
       final testCase = TestCase(EngineDrawContext(engineCase));
       try {
         final outcome = await _runCase(testCase, body);
-        // The engine refusing a call is not the property failing. A body
-        // that asks for something no draw can give -- a domain length no
-        // name fits, an alphabet that spells nothing -- has a mistake in
-        // it, not a counterexample against it, and the engine only says so
-        // when the asking generator is first drawn from, which is inside
-        // the body. Marked interesting it would be shrunk, replayed, and
-        // reported as a minimal input to a bug, so the run stops here
-        // instead, with the refusal in the engine's own words.
+        // An exception out of the engine is not the property failing --
+        // whether the engine refused what the body asked (a domain length
+        // no name fits, an alphabet that spells nothing) or failed on its
+        // own. Either way, marked interesting it would be shrunk,
+        // replayed, and reported as a minimal input to a bug that is not
+        // in the property, so the run stops here instead, saying which of
+        // the two it was.
         if (outcome.error case final HegelException error) {
-          throw PropertyError(
-            'the body asked the engine for something it refused: '
-            '${error.message}',
-          );
+          throw PropertyError('the body ${_engineComplaint(error)}');
         }
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
@@ -270,6 +266,23 @@ Future<_Outcome> _runCase(
 /// arrive back at the guard it came from.
 void _registerLate(Zone host, String what, Object error, StackTrace stack) =>
     host.run(() => registerException(PropertyError('$what: $error'), stack));
+
+/// What [error] amounts to, as the rest of a sentence about who hit it.
+///
+/// An invalid argument is a refusal: the body asked for something no draw
+/// can give, and the engine's diagnostic already says what, so that is the
+/// whole message. Any other code is the engine failing on its own -- a
+/// backend error, a violated internal invariant -- which is not the body's
+/// doing, so the blame moves and nothing of the exception is dropped: with
+/// no bad request to point at, the operation and code are the report, and
+/// they survive even a failure the engine had no words for.
+String _engineComplaint(HegelException error) => switch (error.code) {
+  HegelResultCode.invalidArg =>
+    'asked the engine for something it refused: ${error.message}',
+  _ =>
+    'hit a failure inside the engine, which points at a bug in the engine '
+        'or in this binding rather than in the property: $error',
+};
 
 /// Replays the minimal counterexample and raises what it did.
 ///
@@ -537,12 +550,11 @@ Future<void> _reproduce(
         'assumed something the recorded case does not satisfy',
       );
     case final HegelException error:
-      // The same refusal the run loop stops on: a generator asked the
-      // engine for something it refuses, which is a mistake in the body
-      // rather than anything about the recorded case.
+      // The same ending the run loop stops on: a mistake in the body or a
+      // failure in the engine, and either way nothing about the recorded
+      // case.
       throw PropertyError(
-        'the blob given to reproduce asked the engine for something it '
-        'refused: ${error.message}',
+        'the blob given to reproduce ${_engineComplaint(error)}',
       );
     case final Object error:
       Error.throwWithStackTrace(error, outcome.stack!);
@@ -622,7 +634,7 @@ Never raiseReplayed({
       return (
         error: PropertyError(
           'the property failed at $origin, but replaying its counterexample '
-          'asked the engine for something it refused: ${error.message}',
+          '${_engineComplaint(error)}',
         ),
         stack: StackTrace.current,
       );

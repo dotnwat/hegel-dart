@@ -450,6 +450,39 @@ void main() {
       );
     });
 
+    test('keeps an engine fault the engine\'s, with everything it '
+        'said', () async {
+      // The other arm of the split: a code that is not a refusal -- here a
+      // backend failure -- is not the body's doing, so the report moves
+      // the blame and keeps the whole exception, operation and code
+      // included, which is what a bug report against the engine needs.
+      // Thrown by hand, because a working engine cannot be driven to
+      // produce one -- and a thrown exception is all the ladder ever sees.
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans());
+          throw HegelException(
+            'hegel_generate_boolean',
+            -3,
+            'the entropy source closed',
+          );
+        }, settings: runSettings()),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('bug in the engine'),
+              contains('hegel_generate_boolean'),
+              contains('backend'),
+              contains('the entropy source closed'),
+              isNot(contains('asked the engine for something it refused')),
+            ),
+          ),
+        ),
+      );
+    });
+
     test('leaves a refusal this layer makes to the property', () async {
       // The line the special case does not cross. An ArgumentError raised
       // where a generator was written is Dart code throwing, and Dart code
@@ -880,6 +913,31 @@ void main() {
             allOf(
               contains('asked the engine for something it refused'),
               contains('the alphabet is empty'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('says so when the replay failed inside the engine', () {
+      // A code that is no refusal, with no diagnostic at all -- the worst
+      // case for a report. The operation and the named code are what
+      // survive, which is exactly what an empty message would otherwise
+      // have erased.
+      expect(
+        () => raiseReplayed(
+          origin: origin,
+          error: HegelException('hegel_generate_integer', -3, ''),
+          stack: StackTrace.current,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('bug in the engine'),
+              contains('hegel_generate_integer'),
+              contains('backend (-3)'),
             ),
           ),
         ),
