@@ -716,8 +716,11 @@ ABI — the bindings' two-worker test already proved the primitives):
   every await point in the rule bodies — which is precisely the concurrency real Dart programs
   have, and enough to catch lost-update/interleaving bugs in async SUTs (the same KV-store
   race both Rust's and Go's example suites plant and find). Rules in different groups never
-  overlap, per the engine's rounds. Worker notes are buffered and tagged `[worker N]`,
-  flushed round-by-round (Go's presentation); simultaneous worker outcomes resolve by the Go
+  overlap, per the engine's rounds. What a worker notes *and draws* is buffered and tagged
+  `[worker N]`, flushed round-by-round (Go's presentation), with steps numbered per worker
+  rather than per case -- a shared counter cannot be wound back when a rule declines without
+  handing a number out twice, and the worker-at-a-time flush means a case-wide number would
+  be read out of order regardless; simultaneous worker outcomes resolve by the Go
   precedence (control signals > overrun > invalid > failures, lowest index first, dropped
   failures noted).
 - The first `maxConcurrency > 1` creation on a run is refused by the engine with

@@ -128,11 +128,18 @@ abstract base class StateMachine {
 /// Step 3: reset
 /// ```
 ///
+/// Every value a step draws is labelled with that step, so a machine whose
+/// one rule draws a `by` three times reports `step 1 by`, `step 2 by`, and
+/// `step 3 by` rather than three values called `by`. Name the draw; the step
+/// is added, and an unnamed draw has nothing to add it to.
+///
 /// A rule may also turn itself down from inside its body, with
 /// [TestCase.assume], for a precondition that depends on what the step drew
-/// rather than only on the model. That rejection costs the draws it took but
-/// not the step. What it cannot do is stand in for an assumption the *engine*
-/// raised -- drawing from an empty pool, or a string generator that rejected
+/// rather than only on the model. Nothing of it is kept: the step is not
+/// counted, what it said and drew comes back out of the report, and the
+/// choices it made are dropped rather than left in the sequence for the
+/// shrinker to work at. What it cannot do is stand in for an assumption the
+/// *engine* raised -- drawing from an empty pool, or a string generator that rejected
 /// its own draw -- because by then the case is over rather than the step:
 /// the engine has latched it, every later draw would raise the same signal,
 /// and the case ends invalid. Guard those with [Rule.precondition], which is
@@ -149,10 +156,15 @@ abstract base class StateMachine {
 /// read and a write that were never meant to be separable, a check that
 /// stopped being true between the checking and the acting.
 ///
-/// [Rule.group] says what may overlap with what. A worker's notes are kept to
-/// itself while a round runs and flushed at the join point tagged
-/// `[worker N]`, because two workers writing into one log interleave into
-/// something no one can read.
+/// [Rule.group] says what may overlap with what. What a worker says and draws
+/// is kept to itself while a round runs and taken across at the join point
+/// tagged `[worker N]`, because two workers writing into one log interleave
+/// into something no one can read.
+///
+/// Steps are numbered per worker, so a concurrent script has a `Step 1` for
+/// each of them and the tag beside it says whose. There is no number that
+/// means "third step of the case": the logs are taken across a worker at a
+/// time, so one would be read out of order anyway.
 ///
 /// The first concurrent machine on a run is refused: the engine raises
 /// [AssumptionFailed], that case ends invalid, and every case after it is

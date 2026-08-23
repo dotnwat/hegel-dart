@@ -709,15 +709,24 @@ final class TestCase {
     }
   }
 
-  /// Drops everything recorded since [mark].
+  /// Drops the draws and notes recorded since [mark].
+  ///
+  /// Those two and no more, which is all a case keeps: what a body did to the
+  /// engine or to the world on its way to declining is done. An observation
+  /// reported with [target] has reached the engine, and a resource registered
+  /// with [onRelease] is still registered and still released when the case
+  /// ends. Neither is a thing to undo, but neither is a thing this takes back
+  /// either, and a rule that targets and then declines has recorded that
+  /// label -- which the engine expects at most once a case.
+  ///
+  /// Unguarded on purpose: `removeRange` over an empty range is a no-op, so a
+  /// mark at the end costs nothing, and a mark that could not be honoured
+  /// should be a range error rather than a silent return that leaves a
+  /// declined step's parameters in the counterexample.
   @internal
   void rollBackTo(({int draws, int notes}) mark) {
-    if (_draws.length > mark.draws) {
-      _draws.removeRange(mark.draws, _draws.length);
-    }
-    if (_notes.length > mark.notes) {
-      _notes.removeRange(mark.notes, _notes.length);
-    }
+    _draws.removeRange(mark.draws, _draws.length);
+    _notes.removeRange(mark.notes, _notes.length);
   }
 
   /// Takes what [worker] drew and noted into this case, tagged with [tag].
@@ -731,10 +740,16 @@ final class TestCase {
   ///
   /// Drawn values are tagged the same way, and for the same reason: two
   /// workers running one rule produce two values under one name, and a report
-  /// that showed `by = 1` twice would leave the reader to guess which step
-  /// each belonged to. A draw that was never named keeps its position
-  /// instead, which the merge leaves alone -- naming it after a worker and
-  /// nothing else would trade an ambiguous label for a useless one.
+  /// that showed `by = 1` twice would leave the reader to guess whose it was.
+  ///
+  /// A draw that was never named is left alone, and is the worse for it. It
+  /// falls back to its position, and the position it falls back to is the one
+  /// it ends up at *here* -- so it depends on how much the body drew before
+  /// the machine started and on how many draws every earlier worker made, and
+  /// adding one draw anywhere ahead of it renumbers it. There is no honest
+  /// label to give it: a tag with no name under it would say which worker
+  /// made some value without saying which value. Naming the draw is the fix,
+  /// and this is the case that most needs it.
   @internal
   void absorb(TestCase worker, String tag) {
     // At one worker the driver makes the root case its own worker, and a case

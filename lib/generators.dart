@@ -17,9 +17,14 @@
 ///
 /// The same generators either way; this is a spelling, not a second API.
 ///
-/// `Pool` comes with them, which is the one name here that is not itself a
-/// generator. It is where two of them come from, and a pool separated from
-/// `gen.reusable` by an import would be a seam across one idea.
+/// `Pool` comes with them, which is not itself a generator: it is where
+/// `pool.reusable` and `pool.consumed` come from, and putting a pool on the
+/// far side of an import from the generators it hands out would be a seam
+/// across one idea.
 library;
 
-export 'src/property/generator.dart';
+// The counter is `@visibleForTesting`, which is a lint and not an export
+// filter, so it would otherwise be part of this library's public surface --
+// and it is not a generator, which is the one thing this library claims
+// everything here is. The tests that read it import the source directly.
+export 'src/property/generator.dart' hide nativeStringGeneratorCount;
