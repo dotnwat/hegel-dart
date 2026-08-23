@@ -19,10 +19,21 @@ import '../support/shrink_pin.dart';
 /// where a particular rule comes up at a particular point -- the rejected
 /// one, the one after it, the round that ends.
 final class _ScriptedMachine extends FakeDrawContext implements DrawMachine {
-  _ScriptedMachine(this.rounds);
+  _ScriptedMachine(this.rounds, {this.integers = const <int>[]});
 
   /// The rule indices to hand out, one list per round.
   final List<List<int>> rounds;
+
+  /// What a rule's own draws answer with, in order.
+  final List<int> integers;
+
+  int _nextInteger = 0;
+
+  @override
+  int drawInteger({required int min, required int max}) {
+    calls.add('draw $min..$max');
+    return integers[_nextInteger++];
+  }
 
   /// Whether the engine has ended the case out from under the driver.
   bool aborted = false;
@@ -367,17 +378,20 @@ void main() {
       expect(testCase.notes, <String>['Step 1: push']);
     });
 
-    test('takes its drawn parameters with it', () async {
-      final context = _ScriptedMachine(<List<int>>[
-        <int>[0, 1],
-      ]);
+    test('takes its drawn parameters with it, out of both accounts', () async {
+      final context = _ScriptedMachine(
+        <List<int>>[
+          <int>[0, 1],
+        ],
+        integers: <int>[7],
+      );
       final testCase = TestCase(context);
 
       await runStateful(
         testCase,
         _Machine(<Rule>[
           Rule('pop', (TestCase tc) {
-            tc.draw(just(7), name: 'by');
+            tc.draw(integers(min: 0, max: 99), name: 'by');
             tc.assume(false);
           }),
           Rule('push', (TestCase tc) {}),
@@ -388,6 +402,16 @@ void main() {
       // counterexample was built from, and reporting it as one sends the
       // reader looking for a step that is not in the script.
       expect(testCase.draws, isEmpty);
+
+      // And out of the engine's account too, which is the half a test that
+      // only reads the report cannot see. A span closed as kept leaves the
+      // choices in the sequence the reproduce blob replays, so the report
+      // would be describing a case the blob does not produce -- and the
+      // shrinker would go on picking at values printed nowhere.
+      expect(
+        context.calls,
+        containsAllInOrder(<String>['draw 0..99', 'discard', 'rejected']),
+      );
     });
   });
 
@@ -621,7 +645,7 @@ void main() {
         testCase,
         _Machine(<Rule>[
           Rule('push', (TestCase tc) async {
-            tc.draw(just(tc == testCase ? -1 : 7), name: 'by');
+            tc.draw(just(7), name: 'by');
             await Future<void>.delayed(Duration.zero);
           }),
         ]),
@@ -778,7 +802,7 @@ void main() {
   });
 
   group('step numbers under several workers', () {
-    test('are never handed out twice', () async {
+    test('run from one, per worker, however rules decline', () async {
       // Worker 0 announces a step, worker 1 announces the next, and then
       // worker 0's rule turns itself down. A counter shared between them
       // cannot be wound back at that point: the number it would give up has

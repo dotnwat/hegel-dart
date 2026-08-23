@@ -548,13 +548,28 @@ final class TestCase {
   ///
   /// Asynchronous, since a rule body is: the span stays open across an await,
   /// which is what the engine expects of a case that is still running.
+  ///
+  /// A step that turns itself down closes its span as discarded, the way
+  /// [attempt] closes a filtered draw. The engine then drops what it drew
+  /// instead of carrying it around for the rest of the case -- which matters
+  /// twice over, because the caller also takes such a step back out of the
+  /// report. Closed as kept, the choices would stay in the sequence the
+  /// reproduce blob replays while the counterexample said nothing about them,
+  /// and the shrinker would be left picking at values that appear nowhere.
+  ///
+  /// Only an assumption discards. Anything else the body throws is the
+  /// property failing, and those draws are the counterexample.
   @internal
   Future<T> step<T>(SpanLabel label, FutureOr<T> Function() body) async {
     _context.startSpan(label);
+    var kept = true;
     try {
       return await body();
+    } on AssumptionFailed {
+      kept = false;
+      rethrow;
     } finally {
-      _context.stopSpan();
+      _context.stopSpan(discard: !kept);
     }
   }
 
