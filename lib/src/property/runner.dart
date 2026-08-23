@@ -103,6 +103,16 @@ Future<void> runProperty(
       final testCase = TestCase(EngineDrawContext(engineCase));
       try {
         final outcome = await _runCase(testCase, body);
+        // An exception out of the engine is not the property failing --
+        // whether the engine refused what the body asked (a domain length
+        // no name fits, an alphabet that spells nothing) or failed on its
+        // own. Either way, marked interesting it would be shrunk,
+        // replayed, and reported as a minimal input to a bug that is not
+        // in the property, so the run stops here instead, saying which of
+        // the two it was.
+        if (outcome.error case final HegelException error) {
+          throw PropertyError('the body ${_engineComplaint(error)}');
+        }
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
@@ -256,6 +266,36 @@ Future<_Outcome> _runCase(
 /// arrive back at the guard it came from.
 void _registerLate(Zone host, String what, Object error, StackTrace stack) =>
     host.run(() => registerException(PropertyError('$what: $error'), stack));
+
+/// What [error] amounts to, as the rest of a sentence about who hit it.
+///
+/// An invalid argument is a refusal: the body asked for something no draw
+/// can give, and the engine's diagnostic already says what, so that is the
+/// whole message. Any other code is the engine failing on its own -- a
+/// backend error, a violated internal invariant -- which is not the body's
+/// doing, so the blame moves and nothing of the exception is dropped: with
+/// no bad request to point at, the operation and code are the report, and
+/// they survive even a failure the engine had no words for.
+///
+/// The callers match on the public type, and that is safe because the type
+/// does not travel: [HegelException] is deliberately not exported, so
+/// through the public API only the engine raises one, and code under test
+/// cannot throw one by accident. A body can still produce one by importing
+/// this package's internals -- the fault-arm tests do exactly that -- and a
+/// body that reaches past the public surface is read as the engine it is
+/// impersonating. This is the same boundary `lib/hegel.dart` draws from the
+/// other side, where which signal types are nameable is decided export by
+/// export. The catalog's own refusals stay on the other side of the line:
+/// an [ArgumentError] raised where a generator was written is Dart code
+/// throwing, indistinguishable from the code under test doing the same, so
+/// it remains a counterexample.
+String _engineComplaint(HegelException error) => switch (error.code) {
+  HegelResultCode.invalidArg =>
+    'asked the engine for something it refused: ${error.message}',
+  _ =>
+    'hit a failure inside the engine, which points at a bug in the engine '
+        'or in this binding rather than in the property: $error',
+};
 
 /// Replays the minimal counterexample and raises what it did.
 ///
@@ -522,6 +562,13 @@ Future<void> _reproduce(
         'the blob given to reproduce was rejected as invalid; the body '
         'assumed something the recorded case does not satisfy',
       );
+    case final HegelException error:
+      // The same ending the run loop stops on: a mistake in the body or a
+      // failure in the engine, and either way nothing about the recorded
+      // case.
+      throw PropertyError(
+        'the blob given to reproduce ${_engineComplaint(error)}',
+      );
     case final Object error:
       Error.throwWithStackTrace(error, outcome.stack!);
   }
@@ -534,13 +581,15 @@ Future<void> _reproduce(
 /// endings all mean the same thing -- the stored case is no longer the
 /// failure it was recorded as -- and differ only in what the body did
 /// instead, which is the part worth saying: a body that did not fail, one
-/// that rejected the case, and one that drew past what was stored are three
-/// different mistakes.
+/// that rejected the case, one that drew past what was stored, and one that
+/// asked the engine for something it refused are four different mistakes.
 ///
-/// Separated from the run so that the four endings can be checked directly.
-/// Three of them need a body that changes its mind between the run and the
-/// replay, and the engine catches a body that changes its mind *during* a
-/// run, so there is no run that produces them on request.
+/// Separated from the run so that every ending can be checked directly.
+/// All but the first need a body that changes its mind between the run and
+/// the replay. A run that shrinks catches such a body itself -- the engine
+/// sees the flip while probing and calls the whole run flaky -- but a run
+/// whose phases stop at generation does not, and reaches these endings for
+/// real, which is how the runner's flakiness tests drive them.
 @visibleForTesting
 Never raiseReplayed({
   required String origin,
@@ -591,6 +640,14 @@ Never raiseReplayed({
         error: PropertyError(
           'the property failed at $origin, but replaying its counterexample '
           'rejected it as invalid; the body assumed differently on the replay',
+        ),
+        stack: StackTrace.current,
+      );
+    case final HegelException error:
+      return (
+        error: PropertyError(
+          'the property failed at $origin, but replaying its counterexample '
+          '${_engineComplaint(error)}',
         ),
         stack: StackTrace.current,
       );

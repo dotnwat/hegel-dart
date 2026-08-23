@@ -328,4 +328,152 @@ void main() {
       expect(report, contains('tree = Branch(Leaf(0), Leaf(0))'));
     });
   });
+
+  // The pins below are over single draws, which the engine shrinks without
+  // any help from this layer. What they buy is different from the pins
+  // above: each one is where an engine bump that moves a family's shrink
+  // ordering, or a frontend change that disturbs a leaf draw, first shows.
+
+  group('a double generator', () {
+    test('shrinks a positive failure to one', () async {
+      // The float lattice prefers integral values, and one is the smallest
+      // integral value above zero. Getting 1.0 rather than the smallest
+      // representable positive double is the engine's ordering arriving
+      // here undisturbed.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(doubles(), name: 'value');
+        if (value > 0) throw StateError('$value is positive');
+      });
+
+      expect(report, contains('value = 1.0'));
+    });
+
+    test('shrinks to the bound when the bound still fails', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(doubles(min: 0, max: 10), name: 'value');
+        if (value >= 5) throw StateError('$value is big');
+      });
+
+      expect(report, contains('value = 5.0'));
+    });
+
+    test('shrinks all but one element of a list to zero', () async {
+      // The variable-sized context: the failure needs one nonzero element,
+      // so the length holds at its minimum, the others walk to zero, and
+      // the survivor walks to one.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(
+          lists(doubles(), minLength: 3, maxLength: 6),
+          name: 'value',
+        );
+        if (value.any((double element) => element != 0)) {
+          throw StateError('$value has a nonzero element');
+        }
+      });
+
+      expect(report, contains('value = [0.0, 0.0, 1.0]'));
+    });
+  });
+
+  group('a text generator', () {
+    test('shrinks a nonempty failure to the zero character', () async {
+      // One character, and the character is '0': the bottom of the
+      // printable range, which the engine prefers to control characters so
+      // that a counterexample is something a reader can look at.
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(text(), name: 'value');
+        if (value.isNotEmpty) throw StateError('$value is not empty');
+      });
+
+      expect(report, contains("value = '0'"));
+    });
+
+    test('shrinks to just the character the failure needs', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(text(), name: 'value');
+        if (value.contains('z')) throw StateError('$value has a z in it');
+      }, testCases: 300);
+
+      expect(report, contains("value = 'z'"));
+    });
+  });
+
+  group('a bytes generator', () {
+    test('shrinks a nonempty failure to a single zero byte', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(bytes(), name: 'value');
+        if (value.isNotEmpty) throw StateError('$value is not empty');
+      });
+
+      expect(report, contains('value = bytes(00)'));
+    });
+  });
+
+  group('a big-integer generator', () {
+    test('shrinks to the boundary that first fails', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(bigIntegers(), name: 'value');
+        if (value >= BigInt.from(101)) throw StateError('$value is big');
+      });
+
+      expect(report, contains('value = 101'));
+    });
+
+    test('lands exactly on a boundary no machine word holds', () async {
+      // 2^80 does not fit in an int64, so ending exactly there means the
+      // shrinker walked the wide-integer path of the ABI down to the
+      // boundary without losing a bit on the way.
+      final wall = BigInt.two.pow(80);
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(bigIntegers(), name: 'value');
+        if (value >= wall) throw StateError('$value is past the wall');
+      }, testCases: 300);
+
+      expect(report, contains('value = $wall'));
+    });
+  });
+
+  group('a duration generator', () {
+    test('shrinks a positive failure to one microsecond', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        final value = testCase.draw(durations(), name: 'value');
+        if (value > Duration.zero) throw StateError('$value is positive');
+      });
+
+      expect(report, contains('value = 0:00:00.000001'));
+    });
+  });
+
+  group('the temporal generators', () {
+    // Always-failing bodies, because the pin is the origin the family
+    // shrinks toward: the start of the millennium and midnight, as in every
+    // sibling frontend. A date pin is where an engine bump that moves the
+    // origin first shows.
+    test('shrink a date to the start of the millennium', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        testCase.draw(dates(), name: 'value');
+        throw StateError('any date will do');
+      });
+
+      expect(report, contains('value = 2000-01-01 00:00:00.000Z'));
+    });
+
+    test('shrink a time to midnight', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        testCase.draw(times(), name: 'value');
+        throw StateError('any time will do');
+      });
+
+      expect(report, contains('value = 0:00:00.000000'));
+    });
+
+    test('shrink a datetime to the millennium midnight', () async {
+      final report = await shrunkReport((TestCase testCase) {
+        testCase.draw(dateTimes(), name: 'value');
+        throw StateError('any datetime will do');
+      });
+
+      expect(report, contains('value = 2000-01-01 00:00:00.000Z'));
+    });
+  });
 }

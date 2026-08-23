@@ -4,6 +4,7 @@ library;
 import 'package:hegel/src/libhegel/session.dart';
 import 'package:hegel/src/libhegel/span.dart';
 import 'package:hegel/src/property/generator.dart';
+import 'package:hegel/src/property/runner.dart';
 import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
@@ -234,6 +235,21 @@ void main() {
         expect(values, isNotEmpty);
       });
 
+      test('produces a repeated element when nothing forbids one', () {
+        // The witness behind the uniqueness tests: a plain list over a
+        // narrow range does repeat itself, so `unique: true` never doing so
+        // is a real claim about the rejection path and not about luck.
+        final values = drawEveryCase(
+          openSession(),
+          lists(integers(min: 0, max: 3), minLength: 2),
+        );
+
+        expect(
+          values.any((List<int> value) => value.toSet().length < value.length),
+          isTrue,
+        );
+      });
+
       test('never repeats an element when uniqueness was asked for', () {
         // A range narrow enough that repeats are what the engine will mostly
         // produce: the rejection path is the one under test, so the test has
@@ -272,6 +288,27 @@ void main() {
             predicate<List<bool>>(
               (List<bool> value) => value.toSet().length == 2,
               'holds both booleans',
+            ),
+          ),
+        );
+      });
+
+      test('ends the run rather than looping when uniqueness cannot '
+          'be had', () async {
+        // Three distinct booleans do not exist, so every case dies refusing
+        // repeats, and the only way out is the engine noticing. What this
+        // pins is that there is a way out: the reject loop ends in the
+        // filtering health check, in bounded time, not in a hang a user
+        // has to kill.
+        await expectLater(
+          runProperty((TestCase testCase) {
+            testCase.draw(lists(booleans(), minLength: 3, unique: true));
+          }, settings: caseSettings()),
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              contains('FilterTooMuch'),
             ),
           ),
         );
@@ -399,6 +436,26 @@ void main() {
         );
 
         expect(values, isNotEmpty);
+      });
+
+      test('ends the run rather than looping when the elements cannot '
+          'fill it', () async {
+        // The set the type system will happily ask for and no run can
+        // produce: three distinct booleans. Every case refuses repeats
+        // until the engine calls the filtering, which is the ending this
+        // pins -- a verdict about the asking, in bounded time.
+        await expectLater(
+          runProperty((TestCase testCase) {
+            testCase.draw(sets(booleans(), minLength: 3));
+          }, settings: caseSettings()),
+          throwsA(
+            isA<PropertyError>().having(
+              (PropertyError error) => error.message,
+              'message',
+              contains('FilterTooMuch'),
+            ),
+          ),
+        );
       });
     });
   });

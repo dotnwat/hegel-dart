@@ -166,6 +166,35 @@ void main() {
       );
     });
 
+    test('reports a body the engine had to refuse', () async {
+      // The blob is fine; the body is not. A generator the engine refuses
+      // -- here a domain length no name fits -- says so on its first draw,
+      // which is during the replay, and the replay reports the refusal
+      // rather than passing the engine's error off as the reproduced
+      // failure.
+      final blob = await blobFromAFailure();
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            testCase.draw(domains(maxLength: 3), name: 'name');
+          },
+          settings: settingsFor(),
+          reproduce: blob,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('asked the engine for something it refused'),
+              contains('leaves no eligible TLDs'),
+            ),
+          ),
+        ),
+      );
+    });
+
     test('reports a blob it cannot read at all', () async {
       await expectLater(
         runProperty(

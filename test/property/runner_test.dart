@@ -24,6 +24,8 @@ Settings runSettings({
   int testCases = 100,
   int seed = 5,
   Mode? mode,
+  Set<Phase>? phases,
+  bool? reportMultipleFailures,
   Set<HealthCheck>? suppress,
   Verbosity? verbosity = Verbosity.quiet,
 }) => Settings(
@@ -31,7 +33,9 @@ Settings runSettings({
   mode: mode,
   seed: seed,
   derandomize: true,
+  phases: phases,
   database: Database.disabled,
+  reportMultipleFailures: reportMultipleFailures,
   verbosity: verbosity,
   suppressHealthChecks: suppress ?? machineSpeedChecks,
 );
@@ -394,6 +398,308 @@ void main() {
         contains('without saying why'),
       );
     });
+
+    test('terminates all the same when the checks that would say so '
+        'are off', () async {
+      // The hang guard from the reference suite: a body that rejects every
+      // case, with every health check suppressed, must still end when the
+      // engine's budget for invalid cases runs out. Holding is the right
+      // verdict -- suppressing the checks asked for exactly this run -- but
+      // only if the run actually ends.
+      await runProperty((TestCase testCase) {
+        testCase.draw(booleans());
+        testCase.assume(false);
+      }, settings: runSettings(suppress: everyHealthCheck));
+    });
+  });
+
+  group('a body the engine had to refuse', () {
+    test('ends the run in the engine\'s own words, not as a '
+        'counterexample', () async {
+      // `domains(maxLength: 3)` is a mistake -- no domain name fits in
+      // three characters -- and the engine only says so when the generator
+      // is first drawn from, which is inside the body. Treated like any
+      // other error there it would be shrunk, replayed, and reported as
+      // the minimal input to a bug, so the runner ends the run instead:
+      // the property was never checked, and the report says what was.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            testCase.draw(domains(maxLength: 3), name: 'name');
+          },
+          settings: runSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('asked the engine for something it refused'),
+              contains('leaves no eligible TLDs'),
+            ),
+          ),
+        ),
+      );
+      expect(
+        said,
+        isEmpty,
+        reason: 'a configuration mistake has no counterexample to print',
+      );
+    });
+
+    test('keeps an engine fault the engine\'s, with everything it '
+        'said', () async {
+      // The other arm of the split: a code that is not a refusal -- here a
+      // backend failure -- is not the body's doing, so the report moves
+      // the blame and keeps the whole exception, operation and code
+      // included, which is what a bug report against the engine needs.
+      // Thrown by hand, because a working engine cannot be driven to
+      // produce one -- and a thrown exception is all the ladder ever sees.
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans());
+          throw HegelException(
+            'hegel_generate_boolean',
+            -3,
+            'the entropy source closed',
+          );
+        }, settings: runSettings()),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('bug in the engine'),
+              contains('hegel_generate_boolean'),
+              contains('backend'),
+              contains('the entropy source closed'),
+              isNot(contains('asked the engine for something it refused')),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('leaves a refusal this layer makes to the property', () async {
+      // The line the special case does not cross. An ArgumentError raised
+      // where a generator was written is Dart code throwing, and Dart code
+      // throwing is what a failing property is -- the same error from the
+      // code under test must stay a counterexample. So a body that builds
+      // an impossible generator out of a drawn value fails like any other
+      // body, rather than ending the run.
+      await expectLater(
+        runProperty((TestCase testCase) {
+          final n = testCase.draw(integers(min: 0, max: 10), name: 'n');
+          testCase.draw(integers(min: n + 1, max: n));
+        }, settings: runSettings()),
+        throwsArgumentError,
+      );
+    });
+  });
+
+  group('a bug the checks could have hidden', () {
+    test('is reported, not the storm of rejections around it', () async {
+      // Half of every range is rejected outright, which is FilterTooMuch
+      // territory -- but the other half fails, and a found bug outranks a
+      // fired check: the engine stops checking once it has a failure in
+      // hand. What reaches the caller is the bug, shrunk as usual to the
+      // smallest odd value.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            final value = testCase.draw(
+              integers(min: 0, max: 1000),
+              name: 'value',
+            );
+            if (value.isOdd) throw StateError('the real bug');
+            testCase.assume(false);
+          },
+          settings: runSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            'the real bug',
+          ),
+        ),
+      );
+      expect(said.join('\n'), contains('value = 1'));
+    });
+  });
+
+  group('a run with nothing configured', () {
+    test('spends the engine default of one hundred cases', () async {
+      // No case count, no seed, no derandomize: everything left to the
+      // engine, whose default budget is the one number users learn first.
+      // The draw is deliberately wide -- over a narrow one the engine
+      // exhausts the choice tree and ends the run early, which would make
+      // this a count of something else.
+      var bodies = 0;
+
+      await runProperty(
+        (TestCase testCase) {
+          bodies++;
+          testCase.draw(integers());
+        },
+        settings: const Settings(
+          database: Database.disabled,
+          verbosity: Verbosity.quiet,
+          suppressHealthChecks: machineSpeedChecks,
+        ),
+      );
+
+      expect(bodies, 100);
+    });
+  });
+
+  group('a run told to keep a single failure', () {
+    test('collapses two bugs into the first one found', () async {
+      // The report-multiple switch, turned off: the engine keeps one
+      // failure per run instead of one per origin, so the caller gets one
+      // error and one block, with no origins line claiming otherwise. The
+      // default -- both bugs, each shrunk -- is pinned end to end by the
+      // subprocess suite.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            final value = testCase.draw(
+              integers(min: 0, max: 1000),
+              name: 'value',
+            );
+            if (value.isOdd && value > 100) throw StateError('odd too big');
+            if (value.isEven && value > 500) {
+              throw ArgumentError('even too big');
+            }
+          },
+          settings: runSettings(reportMultipleFailures: false),
+          onDiagnostic: said.add,
+        ),
+        throwsStateError,
+      );
+
+      expect(said, hasLength(1));
+      expect(said.single, isNot(contains('distinct ways')));
+    });
+  });
+
+  group('a property that does not fail the same way twice', () {
+    // Two detectors, one per phase set. A run that shrinks re-runs the body
+    // while probing, so the engine sees the verdict flip and calls the run
+    // flaky itself. A run that stops at generation gives the engine no
+    // second look, and the runner's own final replay is what notices --
+    // `replayedFailure` deciding, driven here through real runs.
+    test('is called flaky when the engine sees the flip while '
+        'shrinking', () async {
+      var calls = 0;
+
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans(), name: 'flag');
+          if (calls++ == 0) throw StateError('fails only on the first call');
+        }, settings: runSettings()),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('Flaky test detected'),
+              contains('different outcomes'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('is caught by the replay when the run never shrank', () async {
+      var calls = 0;
+
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans(), name: 'flag');
+          if (calls++ == 0) throw StateError('fails only on the first call');
+        }, settings: runSettings(phases: <Phase>{Phase.generate})),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            contains('did not fail again'),
+          ),
+        ),
+      );
+    });
+
+    test('is caught when the replay rejects what was recorded', () async {
+      var calls = 0;
+
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans(), name: 'flag');
+          if (calls++ == 0) throw StateError('fails only on the first call');
+          testCase.assume(false);
+        }, settings: runSettings(phases: <Phase>{Phase.generate})),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            contains('rejected it as invalid'),
+          ),
+        ),
+      );
+    });
+
+    test('is caught when the replay outdraws what was recorded', () async {
+      var calls = 0;
+
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(booleans(), name: 'flag');
+          if (calls++ == 0) throw StateError('fails only on the first call');
+          testCase.draw(booleans(), name: 'extra');
+        }, settings: runSettings(phases: <Phase>{Phase.generate})),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            contains('no longer matches its generators'),
+          ),
+        ),
+      );
+    });
+
+    test('is caught at the draws when generation reads outside '
+        'state', () async {
+      // Not the verdict flipping but the choices themselves: a bound that
+      // moves with a counter makes the same recorded choices read back
+      // differently, and the engine says which choice changed and what
+      // that usually means.
+      var calls = 0;
+
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(integers(min: 0, max: 10 + calls++), name: 'value');
+          throw StateError('always fails');
+        }, settings: runSettings()),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('non-deterministic'),
+              contains('global mutable state'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 
   group('whether a test is running', () {
@@ -506,8 +812,8 @@ void main() {
     });
 
     test('hands back an explanation when the replay held', () {
-      // The same four endings `raiseReplayed` throws, since it is this that
-      // decides them. Checked once here rather than four times, because what
+      // The same endings `raiseReplayed` throws, since it is this that
+      // decides them. Checked once here rather than once each, because what
       // this adds over the throwing form is that there is something to hold
       // on to -- which is what a second distinct failure needs.
       final replayed = replayedFailure(
@@ -522,10 +828,10 @@ void main() {
   });
 
   group('a replayed counterexample', () {
-    // The engine refuses a body that changes its mind during a run -- it
-    // reports the flakiness itself -- so a body that changes its mind between
-    // the run and the replay is the only way here, and no run produces one on
-    // request. The decision is checked where it is made.
+    // A run that shrinks catches a body that changes its mind itself -- the
+    // flakiness tests above drive both detectors through real runs -- and
+    // what each replay ending turns into is decided here, so it is checked
+    // here too, one ending at a time.
     const String origin = 'StateError at test/example_test.dart:12';
 
     test('raises the property failure when it fails the same way', () {
@@ -580,6 +886,59 @@ void main() {
             (PropertyError error) => error.message,
             'message',
             contains('no longer matches its generators'),
+          ),
+        ),
+      );
+    });
+
+    test('says so when it asks the engine for something it refuses', () {
+      // The ending a generator whose validity depends on outside state
+      // produces: fine while the run generated, refused by the time the
+      // counterexample replayed. The engine's diagnostic is the part worth
+      // keeping, since it says what was asked.
+      expect(
+        () => raiseReplayed(
+          origin: origin,
+          error: HegelException(
+            'hegel_generate_string',
+            -5,
+            'the alphabet is empty',
+          ),
+          stack: StackTrace.current,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('asked the engine for something it refused'),
+              contains('the alphabet is empty'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('says so when the replay failed inside the engine', () {
+      // A code that is no refusal, with no diagnostic at all -- the worst
+      // case for a report. The operation and the named code are what
+      // survive, which is exactly what an empty message would otherwise
+      // have erased.
+      expect(
+        () => raiseReplayed(
+          origin: origin,
+          error: HegelException('hegel_generate_integer', -3, ''),
+          stack: StackTrace.current,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('bug in the engine'),
+              contains('hegel_generate_integer'),
+              contains('backend (-3)'),
+            ),
           ),
         ),
       );

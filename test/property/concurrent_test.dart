@@ -2,6 +2,7 @@
 library;
 
 import 'package:hegel/src/libhegel/settings.dart';
+import 'package:hegel/src/property/generator.dart';
 import 'package:hegel/src/property/runner.dart';
 import 'package:hegel/src/property/stateful.dart';
 import 'package:hegel/src/property/test_case.dart';
@@ -94,6 +95,28 @@ final class _OverlapMachine extends StateMachine {
   ];
 }
 
+/// A machine whose bug needs no interleaving: four steps break it.
+///
+/// The deterministic counterpart to the account machine, for the tests about
+/// what a concurrent-capable machine keeps when nothing actually overlaps.
+final class _OvershootMachine extends StateMachine {
+  int count = 0;
+
+  @override
+  List<Rule> get rules => <Rule>[
+    Rule('step', (TestCase tc) {
+      count++;
+    }),
+  ];
+
+  @override
+  List<Invariant> get invariants => <Invariant>[
+    Invariant('stays small', (TestCase tc) {
+      if (count > 3) throw StateError('count reached $count');
+    }),
+  ];
+}
+
 void main() {
   group('a concurrent machine', () {
     test('finds the update that one worker could not lose', () async {
@@ -181,6 +204,113 @@ void main() {
       // And never across the group boundary, which is what a group is for.
       expect(overlaps, isNot(contains('shared+alone')));
       expect(overlaps, isNot(contains('alone+shared')));
+    });
+
+    test('reports only its own failure, however the race lands', () async {
+      // A genuinely racy machine may pass or fail on any given seed --
+      // that is what racy means -- and both endings are fine. What must
+      // never come out of one is the framework second-guessing itself: a
+      // nondeterministic run promised no repeat, so there is no flakiness
+      // to detect and no generation mismatch to report. Anything but the
+      // invariant's own failure propagates and fails this test.
+      final failures = <TestFailure>[];
+
+      for (var seed = 1; seed <= 5; seed++) {
+        try {
+          await runProperty(
+            (TestCase testCase) => runStateful(
+              testCase,
+              _AccountMachine(),
+              minConcurrency: 1,
+              maxConcurrency: 4,
+            ),
+            settings: concurrentSettings(testCases: 20, seed: seed),
+          );
+        } on TestFailure catch (failure) {
+          failures.add(failure);
+        }
+      }
+
+      expect(
+        failures,
+        isNotEmpty,
+        reason: 'five seeded runs of a lost update find it at least once',
+      );
+      for (final TestFailure failure in failures) {
+        expect(failure.message, contains('Expected:'));
+      }
+    });
+
+    test('keeps its way back when nothing overlapped', () async {
+      // A machine written for concurrency, failing at one worker: the case
+      // is deterministic, so nothing was given up -- the counterexample
+      // shrinks and the blob hint is offered, exactly as if the machine had
+      // never heard of workers. The nondeterministic notice belongs only to
+      // runs that actually overlapped.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) => runStateful(
+            testCase,
+            _OvershootMachine(),
+            minConcurrency: 1,
+            maxConcurrency: 1,
+          ),
+          settings: concurrentSettings(),
+          onDiagnostic: said.add,
+        ),
+        throwsStateError,
+      );
+
+      final report = said.join('\n');
+      expect(report, contains('reproduce:'));
+      expect(report, isNot(contains('did not promise to repeat itself')));
+    });
+
+    test('outgrows a blob recorded before it went concurrent', () async {
+      // The reference suite's stale-blob scenario: a counterexample kept
+      // while the test was a simple property, replayed after the body grew
+      // a concurrent machine. The machine draws far more than the one
+      // integer the blob holds, and the report says so -- recorded from a
+      // different property than the one that is being replayed.
+      final said = <String>[];
+      try {
+        await runProperty(
+          (TestCase testCase) {
+            final value = testCase.draw(integers(min: 0, max: 1000));
+            if (value > 50) throw StateError('$value is too big');
+          },
+          settings: concurrentSettings(),
+          printBlob: true,
+          onDiagnostic: said.add,
+        );
+      } on StateError {
+        // The failure the blob is harvested from.
+      }
+      final blob = RegExp("reproduce: '([^']+)'")
+          .firstMatch(said.join('\n'))!
+          .group(1)!;
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) => runStateful(
+            testCase,
+            _OvershootMachine(),
+            minConcurrency: 4,
+            maxConcurrency: 4,
+          ),
+          settings: concurrentSettings(),
+          reproduce: blob,
+        ),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            contains('drew more than it holds'),
+          ),
+        ),
+      );
     });
   });
 

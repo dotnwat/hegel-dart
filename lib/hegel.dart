@@ -13,7 +13,11 @@ library;
 // run that held. So it has to be nameable. StopTest is the engine's own --
 // it accounts for the exhausted budget itself and overrides whatever status
 // is reported for such a case -- so swallowing one changes nothing and
-// naming it would buy nothing. Both were checked before deciding.
+// naming it would buy nothing. HegelException stays in for a load-bearing
+// reason: the runner classifies one as the engine speaking -- ending the
+// run rather than reporting a counterexample -- and that reading is only
+// sound while the type cannot come from code under test. Not exporting it
+// is what keeps that true. All three were checked before deciding.
 export 'src/libhegel/errors.dart' show AssumptionFailed;
 export 'src/libhegel/settings.dart'
     show
