@@ -3,10 +3,9 @@
 Property-based testing for Dart, powered by the [Hegel](https://hegel.dev)
 engine.
 
-> **Status: pre-release.** The generator catalog, the combinators, the
-> collections, the failure reporting, the example database and stateful
-> testing all work end to end. What is left before `0.1.0` is packaging and
-> polish; `docs/property-testing-plan.md` is the plan and says what landed
+> **Status: 0.1.0.** The generator catalog, the combinators, the collections,
+> the failure reporting, the example database and stateful testing all work
+> end to end. `docs/property-testing-plan.md` is the plan and says what landed
 > when.
 
 ## Writing a property
