@@ -103,6 +103,20 @@ Future<void> runProperty(
       final testCase = TestCase(EngineDrawContext(engineCase));
       try {
         final outcome = await _runCase(testCase, body);
+        // The engine refusing a call is not the property failing. A body
+        // that asks for something no draw can give -- a domain length no
+        // name fits, an alphabet that spells nothing -- has a mistake in
+        // it, not a counterexample against it, and the engine only says so
+        // when the asking generator is first drawn from, which is inside
+        // the body. Marked interesting it would be shrunk, replayed, and
+        // reported as a minimal input to a bug, so the run stops here
+        // instead, with the refusal in the engine's own words.
+        if (outcome.error case final HegelException error) {
+          throw PropertyError(
+            'the body asked the engine for something it refused: '
+            '${error.message}',
+          );
+        }
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
@@ -522,6 +536,14 @@ Future<void> _reproduce(
         'the blob given to reproduce was rejected as invalid; the body '
         'assumed something the recorded case does not satisfy',
       );
+    case final HegelException error:
+      // The same refusal the run loop stops on: a generator asked the
+      // engine for something it refuses, which is a mistake in the body
+      // rather than anything about the recorded case.
+      throw PropertyError(
+        'the blob given to reproduce asked the engine for something it '
+        'refused: ${error.message}',
+      );
     case final Object error:
       Error.throwWithStackTrace(error, outcome.stack!);
   }
@@ -534,13 +556,15 @@ Future<void> _reproduce(
 /// endings all mean the same thing -- the stored case is no longer the
 /// failure it was recorded as -- and differ only in what the body did
 /// instead, which is the part worth saying: a body that did not fail, one
-/// that rejected the case, and one that drew past what was stored are three
-/// different mistakes.
+/// that rejected the case, one that drew past what was stored, and one that
+/// asked the engine for something it refused are four different mistakes.
 ///
-/// Separated from the run so that the four endings can be checked directly.
-/// Three of them need a body that changes its mind between the run and the
-/// replay, and the engine catches a body that changes its mind *during* a
-/// run, so there is no run that produces them on request.
+/// Separated from the run so that every ending can be checked directly.
+/// All but the first need a body that changes its mind between the run and
+/// the replay. A run that shrinks catches such a body itself -- the engine
+/// sees the flip while probing and calls the whole run flaky -- but a run
+/// whose phases stop at generation does not, and reaches these endings for
+/// real, which is how the runner's flakiness tests drive them.
 @visibleForTesting
 Never raiseReplayed({
   required String origin,
@@ -591,6 +615,14 @@ Never raiseReplayed({
         error: PropertyError(
           'the property failed at $origin, but replaying its counterexample '
           'rejected it as invalid; the body assumed differently on the replay',
+        ),
+        stack: StackTrace.current,
+      );
+    case final HegelException error:
+      return (
+        error: PropertyError(
+          'the property failed at $origin, but replaying its counterexample '
+          'asked the engine for something it refused: ${error.message}',
         ),
         stack: StackTrace.current,
       );
