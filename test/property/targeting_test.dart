@@ -6,6 +6,7 @@ import 'package:hegel/src/libhegel/session.dart';
 import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/test_case.dart' as engine;
 import 'package:hegel/src/property/generator.dart';
+import 'package:hegel/src/property/runner.dart';
 import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
@@ -150,6 +151,53 @@ void main() {
       );
 
       expect(values, hasLength(5));
+    });
+
+    test('never spends more cases than the budget it was given', () {
+      // Hill-climbing runs extra experiments, and the place they must come
+      // from is the same budget as everything else: a target phase that
+      // exceeded `testCases` would make a slow property slower the moment
+      // someone added an observation to it.
+      for (final int budget in <int>[5, 25]) {
+        final values = everyCase(
+          session,
+          settingsOver(<Phase>{
+            Phase.generate,
+            Phase.target,
+          }, testCases: budget),
+          (TestCase testCase) {
+            final value = testCase.draw(integers(min: 0, max: 1000000));
+            testCase.target(value.toDouble(), label: 'size');
+            return value;
+          },
+        );
+
+        expect(values, hasLength(budget), reason: 'budget $budget');
+      }
+    });
+
+    test('refuses the same label twice in one case', () async {
+      // One observation per label per case is the engine's rule -- a second
+      // would silently overwrite the first -- and breaking it is a mistake
+      // in the property, so it ends the run in the engine's own words
+      // rather than becoming a counterexample.
+      await expectLater(
+        runProperty((TestCase testCase) {
+          testCase.draw(integers(min: 0, max: 10));
+          testCase.target(1, label: 'size');
+          testCase.target(2, label: 'size');
+        }, settings: settingsOver(<Phase>{Phase.generate, Phase.target})),
+        throwsA(
+          isA<PropertyError>().having(
+            (PropertyError error) => error.message,
+            'message',
+            allOf(
+              contains('asked the engine for something it refused'),
+              contains('at most once'),
+            ),
+          ),
+        ),
+      );
     });
   });
 }

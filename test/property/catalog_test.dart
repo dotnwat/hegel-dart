@@ -384,6 +384,21 @@ void main() {
       expect(values, contains(double.negativeInfinity));
     });
 
+    test('holds an excluded infinite endpoint out of the run', () {
+      // The default minimum is negative infinity, so excluding it is a
+      // legal ask about a single value: everything else stays, including
+      // the other infinity, and only the named endpoint goes. The run
+      // above is the control that reaches both.
+      final values = drawEveryCase(
+        openSession(),
+        doubles(excludeMin: true),
+        testCases: 300,
+      );
+
+      expect(values, isNot(contains(double.negativeInfinity)));
+      expect(values, contains(double.infinity));
+    });
+
     test('keeps NaN out once a bound is given', () {
       final values = drawEveryCase(
         openSession(),

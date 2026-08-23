@@ -800,8 +800,12 @@ layer: `Settings`, `Database`, `Phase`, `HealthCheck`, `Mode`, `Backend`, `Verbo
 
 House rules carry over: **the engine is never mocked; integration against the real engine is
 the default; fakes exist only for branches the engine cannot produce; 100% line+branch
-coverage, gated in CI, maintained by every commit.** The property layer adds tiers of its own,
-because a test framework's correctness claims are about what *users* see:
+coverage, gated in CI, maintained by every commit.** (As built, the coverage gate enforces
+ratcheted floors sitting just under the measured ceiling rather than a literal 100% —
+`tool/check_coverage.dart` says why: Windows-only and POSIX-permission branches are
+unreachable on the one platform coverage runs on, and the floors only ever move up.) The
+property layer adds tiers of its own, because a test framework's correctness claims are about
+what *users* see:
 
 1. **Pure unit tests** (no engine): `repr()` rendering; origin extraction from synthetic stack
    traces (user frame, no user frame, package-only); database-key derivation; env-override

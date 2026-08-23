@@ -269,6 +269,70 @@ void main() {
         reason: 'every case rejected, and the run still finished',
       );
     });
+
+    test('carries the everyday shapes through whole', () {
+      // A sweep across the constructs a pattern is usually made of. The
+      // regex engine itself lives behind the ABI and is tested there; what
+      // this guards is the trip -- the pattern string, its flags and its
+      // escapes arriving intact -- which is exactly the part a marshalling
+      // slip would break one construct at a time.
+      final shapes = <(String, bool Function(String))>[
+        ('abc', RegExp(r'^abc$').hasMatch),
+        ('a|bc', RegExp(r'^(a|bc)$').hasMatch),
+        ('ab*c', RegExp(r'^ab*c$').hasMatch),
+        ('ab+c', RegExp(r'^ab+c$').hasMatch),
+        ('ab?c', RegExp(r'^ab?c$').hasMatch),
+        ('a{2,4}', RegExp(r'^a{2,4}$').hasMatch),
+        ('(?:xy){2}', RegExp(r'^(?:xy){2}$').hasMatch),
+        (r'(a)\1', RegExp(r'^(a)\1$').hasMatch),
+        ('a(?=b)b', RegExp(r'^ab$').hasMatch),
+        ('(?i)abc', RegExp(r'^abc$', caseSensitive: false).hasMatch),
+        // Verified over runes rather than by RegExp: the complement reaches
+        // past the basic plane, where a code-unit dot mismatches.
+        (
+          '[^b-z]',
+          (String value) {
+            final runes = value.runes.toList();
+            return runes.length == 1 &&
+                (runes.single < 0x62 || runes.single > 0x7a);
+          },
+        ),
+      ];
+
+      for (final (pattern, accepts) in shapes) {
+        final values = drawEveryCase(
+          openSession(),
+          fromRegex(pattern),
+          testCases: 10,
+        );
+
+        expect(values, isNotEmpty, reason: 'pattern $pattern');
+        for (final String value in values) {
+          expect(
+            accepts(value),
+            isTrue,
+            reason: 'pattern $pattern drew $value',
+          );
+        }
+      }
+    });
+
+    test('honours a case flag rather than flattening it', () {
+      // `(?i)` is the flag most worth its own assertion: a frontend that
+      // lost it would still produce matching strings, just never the other
+      // case, and the sweep above could not tell.
+      final values = drawEveryCase(
+        openSession(),
+        fromRegex('(?i)abc'),
+        testCases: 20,
+      );
+
+      expect(values.toSet(), hasLength(greaterThan(1)));
+      expect(
+        values.map((String value) => value.toLowerCase()).toSet(),
+        <String>{'abc'},
+      );
+    });
   });
 
   group('the ready-made shapes', () {

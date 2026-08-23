@@ -19,6 +19,21 @@ import '../support/property_driver.dart';
 /// engine happened to do twice.
 const int shrunkAtDefaultThreshold = 51;
 
+/// FNV-1a over [bytes], as sixteen hex digits.
+///
+/// The database's own naming: entries by the hash of their bytes, key
+/// directories by the hash of the `native:`-prefixed key. Reproduced here for
+/// the one test that has to plant an entry where the engine will look for
+/// it; nothing else in this suite knows the layout.
+String _fnvHex(List<int> bytes) {
+  var hash = 0xcbf29ce484222325;
+  for (final byte in bytes) {
+    hash ^= byte;
+    hash *= 0x100000001b3;
+  }
+  return BigInt.from(hash).toUnsigned(64).toRadixString(16).padLeft(16, '0');
+}
+
 Settings settingsFor({
   required int seed,
   required Database database,
@@ -329,6 +344,37 @@ void main() {
         after.testCases,
         greaterThan(1),
         reason: 'nothing readable was left to replay, so it must generate',
+      );
+    });
+
+    test('drops an entry whose bytes no longer decode', () {
+      // The database names an entry by the FNV-1a hash of its bytes and the
+      // key directory by the hash of the prefixed key, so a garbage entry
+      // has to be planted under its own true name -- an entry corrupted in
+      // place keeps its old name, and the engine's delete, aimed by hash,
+      // misses it forever (which is what the test above observes: the
+      // in-place corruption survives). Planted properly, the reuse replay
+      // reads the garbage, fails to decode it, and removes it, so the
+      // directory does not accumulate one broken entry per broken write.
+      final directory = scratch();
+      final keyDirectory = Directory(
+        '${directory.path}/${_fnvHex('native:database-test'.codeUnits)}',
+      )..createSync(recursive: true);
+      final garbage = 'not-a-valid-choice-encoding'.codeUnits;
+      final planted = File('${keyDirectory.path}/${_fnvHex(garbage)}')
+        ..writeAsBytesSync(garbage);
+
+      final drive = run(
+        seed: 3,
+        database: Database.at(directory.path),
+        threshold: 2000,
+      );
+
+      expect(drive.result.status, RunStatus.passed);
+      expect(
+        planted.existsSync(),
+        isFalse,
+        reason: 'an entry that cannot be read is not worth keeping',
       );
     });
   });

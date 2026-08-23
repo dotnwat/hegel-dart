@@ -25,6 +25,7 @@ Settings runSettings({
   int seed = 5,
   Mode? mode,
   Set<Phase>? phases,
+  bool? reportMultipleFailures,
   Set<HealthCheck>? suppress,
   Verbosity? verbosity = Verbosity.quiet,
 }) => Settings(
@@ -34,6 +35,7 @@ Settings runSettings({
   derandomize: true,
   phases: phases,
   database: Database.disabled,
+  reportMultipleFailures: reportMultipleFailures,
   verbosity: verbosity,
   suppressHealthChecks: suppress ?? machineSpeedChecks,
 );
@@ -496,6 +498,63 @@ void main() {
         ),
       );
       expect(said.join('\n'), contains('value = 1'));
+    });
+  });
+
+  group('a run with nothing configured', () {
+    test('spends the engine default of one hundred cases', () async {
+      // No case count, no seed, no derandomize: everything left to the
+      // engine, whose default budget is the one number users learn first.
+      // The draw is deliberately wide -- over a narrow one the engine
+      // exhausts the choice tree and ends the run early, which would make
+      // this a count of something else.
+      var bodies = 0;
+
+      await runProperty(
+        (TestCase testCase) {
+          bodies++;
+          testCase.draw(integers());
+        },
+        settings: const Settings(
+          database: Database.disabled,
+          verbosity: Verbosity.quiet,
+          suppressHealthChecks: machineSpeedChecks,
+        ),
+      );
+
+      expect(bodies, 100);
+    });
+  });
+
+  group('a run told to keep a single failure', () {
+    test('collapses two bugs into the first one found', () async {
+      // The report-multiple switch, turned off: the engine keeps one
+      // failure per run instead of one per origin, so the caller gets one
+      // error and one block, with no origins line claiming otherwise. The
+      // default -- both bugs, each shrunk -- is pinned end to end by the
+      // subprocess suite.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) {
+            final value = testCase.draw(
+              integers(min: 0, max: 1000),
+              name: 'value',
+            );
+            if (value.isOdd && value > 100) throw StateError('odd too big');
+            if (value.isEven && value > 500) {
+              throw ArgumentError('even too big');
+            }
+          },
+          settings: runSettings(reportMultipleFailures: false),
+          onDiagnostic: said.add,
+        ),
+        throwsStateError,
+      );
+
+      expect(said, hasLength(1));
+      expect(said.single, isNot(contains('distinct ways')));
     });
   });
 

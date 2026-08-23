@@ -658,7 +658,10 @@ dedicated no-network CI job proves that path stays honest.
    exercise through L2.)
 
 Coverage bar: 100% line + branch, gated in CI from commit 19 (§12), measured per the exclusions in
-§3 (generated externals, the GC-delivery smoke).
+§3 (generated externals, the GC-delivery smoke). As built, the gate enforces ratcheted floors
+sitting just under the measured ceiling rather than a literal 100% — `tool/check_coverage.dart`
+says why: Windows-only and POSIX-permission branches are unreachable on the one platform coverage
+runs on, and the floors only ever move up.
 
 ## 10. CI
 

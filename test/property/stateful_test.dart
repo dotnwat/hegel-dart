@@ -2,6 +2,7 @@
 library;
 
 import 'package:hegel/src/libhegel/errors.dart';
+import 'package:hegel/src/libhegel/settings.dart';
 import 'package:hegel/src/libhegel/span.dart';
 import 'package:hegel/src/property/generator.dart';
 import 'package:hegel/src/property/runner.dart';
@@ -9,6 +10,7 @@ import 'package:hegel/src/property/stateful.dart';
 import 'package:hegel/src/property/test_case.dart';
 import 'package:test/test.dart';
 
+import '../support/property_driver.dart';
 import '../support/scripted_context.dart';
 import '../support/shrink_pin.dart';
 
@@ -320,6 +322,22 @@ final class _CycleMachine extends StateMachine {
       edges.add((a, b));
       if (cycle) throw StateError('the edge $a to $b closes a cycle');
     }, precondition: () => nodes.isNotEmpty),
+  ];
+}
+
+/// Counts its steps and trips at [limit], for the tests about step budgets.
+final class _TripwireMachine extends StateMachine {
+  _TripwireMachine(this.limit);
+
+  final int limit;
+  int count = 0;
+
+  @override
+  List<Rule> get rules => <Rule>[
+    Rule('step', (TestCase tc) {
+      count++;
+      if (count >= limit) throw StateError('reached $limit steps');
+    }),
   ];
 }
 
@@ -1071,6 +1089,77 @@ void main() {
         expect(report, contains('a = 1'), reason: 'seed $seed');
         expect(report, contains('b = 0'), reason: 'seed $seed');
       }
+    });
+  });
+
+  group('a machine under Mode.singleTestCase', () {
+    test('steps for as long as the case runs, unbounded', () async {
+      // The soak seam: one case, no phases, and no step cap -- the machine
+      // keeps taking rules until something stops it, which here is its own
+      // tripwire at three hundred, six times past the ordinary budget. A
+      // workload runner is this mode plus a loop.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) => runStateful(testCase, _TripwireMachine(300)),
+          settings: const Settings(
+            mode: Mode.singleTestCase,
+            seed: 5,
+            derandomize: true,
+            database: Database.disabled,
+            verbosity: Verbosity.quiet,
+            suppressHealthChecks: machineSpeedChecks,
+          ),
+          onDiagnostic: said.add,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            'reached 300 steps',
+          ),
+        ),
+      );
+      expect(said.join('\n'), contains('Step 300: step'));
+    });
+  });
+
+  group('a counterexample longer than the default step cap', () {
+    test('replays whole under the step count that found it', () async {
+      // The reference suite's regression: a failure that needs more steps
+      // than the default cap allows must still reproduce on the final
+      // replay, which means the configured `statefulStepCount` has to reach
+      // the replay too. A replay capped at the default would stop short,
+      // and the run would call its own counterexample stale.
+      final said = <String>[];
+
+      await expectLater(
+        runProperty(
+          (TestCase testCase) => runStateful(testCase, _TripwireMachine(61)),
+          settings: const Settings(
+            testCases: 100,
+            seed: 5,
+            derandomize: true,
+            database: Database.disabled,
+            statefulStepCount: 100,
+            verbosity: Verbosity.quiet,
+            suppressHealthChecks: machineSpeedChecks,
+          ),
+          onDiagnostic: said.add,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            'reached 61 steps',
+          ),
+        ),
+      );
+
+      final report = said.join('\n');
+      expect(report, contains('Step 61: step'));
+      expect(report, isNot(contains('Step 62:')));
     });
   });
 }
