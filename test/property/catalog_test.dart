@@ -43,6 +43,16 @@ void main() {
       expect(values, contains(lessThan(-(1 << 32))));
     });
 
+    test('reaches both ends of a bounded range', () {
+      final values = drawEveryCase(openSession(), integers(min: -20, max: 20));
+
+      // Bounds are where bugs live, so the engine leans on them rather than
+      // leaving them to luck. A run that never touched either end would
+      // mean that weighting was lost somewhere between here and the draw.
+      expect(values, contains(-20));
+      expect(values, contains(20));
+    });
+
     test('refuses an inverted range where it was written', () {
       expect(
         () => integers(min: 5, max: 1),
@@ -362,6 +372,16 @@ void main() {
             'an unbounded double includes NaN, and a run of two hundred '
             'that never saw one would mean the default resolved the other way',
       );
+    });
+
+    test('produces both infinities when nothing was bounded', () {
+      final values = drawEveryCase(openSession(), doubles(), testCases: 300);
+
+      // The other two edges of the type. Allowing infinity is checked on
+      // the wire below; that a run actually reaches both is the claim a
+      // frontend can quietly lose, and the one a bug at an edge needs.
+      expect(values, contains(double.infinity));
+      expect(values, contains(double.negativeInfinity));
     });
 
     test('keeps NaN out once a bound is given', () {

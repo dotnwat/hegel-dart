@@ -182,6 +182,41 @@ void main() {
       expect(overlaps, isNot(contains('shared+alone')));
       expect(overlaps, isNot(contains('alone+shared')));
     });
+
+    test('reports only its own failure, however the race lands', () async {
+      // A genuinely racy machine may pass or fail on any given seed --
+      // that is what racy means -- and both endings are fine. What must
+      // never come out of one is the framework second-guessing itself: a
+      // nondeterministic run promised no repeat, so there is no flakiness
+      // to detect and no generation mismatch to report. Anything but the
+      // invariant's own failure propagates and fails this test.
+      final failures = <TestFailure>[];
+
+      for (var seed = 1; seed <= 5; seed++) {
+        try {
+          await runProperty(
+            (TestCase testCase) => runStateful(
+              testCase,
+              _AccountMachine(),
+              minConcurrency: 1,
+              maxConcurrency: 4,
+            ),
+            settings: concurrentSettings(testCases: 20, seed: seed),
+          );
+        } on TestFailure catch (failure) {
+          failures.add(failure);
+        }
+      }
+
+      expect(
+        failures,
+        isNotEmpty,
+        reason: 'five seeded runs of a lost update find it at least once',
+      );
+      for (final TestFailure failure in failures) {
+        expect(failure.message, contains('Expected:'));
+      }
+    });
   });
 
   group('the concurrency bounds', () {

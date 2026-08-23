@@ -248,6 +248,81 @@ final class _CounterMachine extends StateMachine {
   ];
 }
 
+/// Opens handles and closes them, insisting on strict LIFO order.
+///
+/// The close draws from the consumed side of the pool, so the engine picks
+/// which handle dies -- and the planted bug is that any pick but the most
+/// recently opened one violates the discipline. The shortest script that
+/// shows it is two opens and one wrong close.
+final class _LifoMachine extends StateMachine {
+  _LifoMachine(TestCase testCase) : handles = Pool<int>(testCase);
+
+  final Pool<int> handles;
+  int nextId = 0;
+  final List<int> open = <int>[];
+
+  @override
+  List<Rule> get rules => <Rule>[
+    Rule('open', (TestCase tc) {
+      final id = nextId++;
+      handles.add(tc, id);
+      open.add(id);
+    }),
+    Rule('close', (TestCase tc) {
+      final id = tc.draw(handles.consumed, name: 'handle');
+      final last = open.removeLast();
+      if (id != last) throw StateError('closed $id while $last was above it');
+    }, precondition: () => handles.isNotEmpty),
+  ];
+}
+
+/// Builds a directed graph and fails the moment an edge closes a cycle.
+///
+/// Ported from the reference suite, where this shape guards how pool draws
+/// are recorded: the failure needs two particular nodes linked in both
+/// directions, so the shrunk script keeps exactly two insertions and its
+/// edges must go on naming those two while every step between them is
+/// deleted. A pool that recorded draws as positions in its live contents
+/// would watch each deletion renumber them.
+final class _CycleMachine extends StateMachine {
+  _CycleMachine(TestCase testCase) : nodes = Pool<int>(testCase);
+
+  final Pool<int> nodes;
+  int nextId = 0;
+  final List<(int, int)> edges = <(int, int)>[];
+
+  bool _reachable(int from, int to) {
+    final seen = <int>{from};
+    final frontier = <int>[from];
+    while (frontier.isNotEmpty) {
+      final node = frontier.removeLast();
+      for (final (int a, int b) in edges) {
+        if (a == node && seen.add(b)) {
+          if (b == to) return true;
+          frontier.add(b);
+        }
+      }
+    }
+    return from == to;
+  }
+
+  @override
+  List<Rule> get rules => <Rule>[
+    Rule('new', (TestCase tc) {
+      final id = nextId++;
+      nodes.add(tc, id);
+    }),
+    Rule('edge', (TestCase tc) {
+      final a = tc.draw(nodes.reusable, name: 'a');
+      final b = tc.draw(nodes.reusable, name: 'b');
+      if (a == b) return;
+      final cycle = _reachable(b, a);
+      edges.add((a, b));
+      if (cycle) throw StateError('the edge $a to $b closes a cycle');
+    }, precondition: () => nodes.isNotEmpty),
+  ];
+}
+
 void main() {
   group('a stateful run', () {
     test('registers what the machine declares', () async {
@@ -947,6 +1022,55 @@ void main() {
       expect(report, contains('step 1 by = 1'));
       expect(report, contains('step 2 by = 10'));
       expect(report, contains("Invariant 'matches the model' does not hold"));
+    });
+  });
+
+  group('a planted bug in what a pool remembers', () {
+    test('shrinks a consumed draw to the first thing made', () async {
+      // Three steps and no more: two opens, then the close that takes the
+      // first handle while the second is still above it. The drawn handle
+      // is the pin that matters -- zero says the pool draw shrank to the
+      // earliest insertion and went on meaning it.
+      final report = await shrunkReport(
+        (TestCase testCase) async =>
+            runStateful(testCase, _LifoMachine(testCase)),
+      );
+
+      expect(report, contains('Step 1: open'));
+      expect(report, contains('Step 2: open'));
+      expect(report, contains('Step 3: close'));
+      expect(report, isNot(contains('Step 4:')));
+      // Unprefixed, because the close is the step that threw: a failing
+      // step's draws are reported under the names the body gave them.
+      expect(report, contains('handle = 0'));
+    });
+
+    test('keeps pool references stable while whole steps go', () async {
+      // The cycle needs two nodes linked in both directions, so everything
+      // else the case did has to come out -- and each deletion is where a
+      // reference recorded as a live position would slip. Five seeds,
+      // because the claim is about every path the shrinker takes to the
+      // same four steps, not about one lucky walk.
+      for (var seed = 0; seed < 5; seed++) {
+        final report = await shrunkReport(
+          (TestCase testCase) async =>
+              runStateful(testCase, _CycleMachine(testCase)),
+          seed: seed,
+        );
+
+        expect(report, contains('Step 1: new'), reason: 'seed $seed');
+        expect(report, contains('Step 2: new'), reason: 'seed $seed');
+        expect(report, contains('Step 3: edge'), reason: 'seed $seed');
+        expect(report, contains('Step 4: edge'), reason: 'seed $seed');
+        expect(report, isNot(contains('Step 5:')), reason: 'seed $seed');
+        // The first edge, drawn by a step that finished.
+        expect(report, contains('step 3 a = 0'), reason: 'seed $seed');
+        expect(report, contains('step 3 b = 1'), reason: 'seed $seed');
+        // The edge that closed the cycle, reported by the step that threw
+        // under the names the body gave its draws.
+        expect(report, contains('a = 1'), reason: 'seed $seed');
+        expect(report, contains('b = 0'), reason: 'seed $seed');
+      }
     });
   });
 }

@@ -53,6 +53,18 @@ void main() {
       );
     });
 
+    test('reaches beyond ASCII when nothing was restricted', () {
+      final values = drawEveryCase(openSession(), text());
+
+      // The default alphabet is Unicode, not the bottom of it. A frontend
+      // that quietly narrowed the default -- a codec applied where none was
+      // asked for -- would pass every bounds test here and fail only this.
+      expect(
+        values.any((String value) => value.runes.any((int rune) => rune > 127)),
+        isTrue,
+      );
+    });
+
     test('stays inside a range of code points', () {
       final values = drawEveryCase(
         openSession(),
