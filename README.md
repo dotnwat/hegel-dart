@@ -3,10 +3,11 @@
 Property-based testing for Dart, powered by the [Hegel](https://hegel.dev)
 engine.
 
-> **Status: early.** The runner, the failure reporting and the example
-> database work end to end, but the generator catalog is one entry long —
-> `integers()`. Combinators, collections, strings and stateful testing are
-> next; `docs/property-testing-plan.md` is the plan and says what lands when.
+> **Status: pre-release.** The generator catalog, the combinators, the
+> collections, the failure reporting, the example database and stateful
+> testing all work end to end. What is left before `0.1.0` is packaging and
+> polish; `docs/property-testing-plan.md` is the plan and says what landed
+> when.
 
 ## Writing a property
 
@@ -69,6 +70,104 @@ property('a sum is at least its largest part', (tc) {
 are not it. `HEGEL_TEST_CASES` and `HEGEL_DATABASE` override how many cases a
 run gets and where counterexamples are kept, without editing the source.
 
+## What you can draw
+
+Everything the engine can generate is reachable by name. Integers, big
+integers, doubles, booleans and durations; text, characters, regex matches,
+emails, URLs and domains; bytes, dates, times, date-times, UUIDs and IP
+addresses; lists, sets and maps, with bounds and uniqueness; and tuples.
+
+Generators compose rather than multiply. `map`, `where` and `flatMap` are on
+every one of them, `oneOf` and `optional` and `sampledFrom` pick between
+things, and `composite` builds a value out of several draws when none of those
+fit:
+
+```dart
+final users = composite((tc) => User(
+  name: tc.draw(text(minLength: 1, maxLength: 20)),
+  age: tc.draw(integers(min: 0, max: 120)),
+));
+```
+
+`import 'package:hegel/generators.dart' as gen;` if you would rather prefix
+them than import forty names.
+
+## Testing something that remembers
+
+A property over one value at a time says little about a cache, a queue, or a
+connection pool. For those, describe the steps and what must stay true between
+them, and let the engine pick the order:
+
+```dart
+final class CounterMachine extends StateMachine {
+  final counter = Counter();
+  int model = 0;
+
+  @override
+  List<Rule> get rules => [
+    Rule('increment', (tc) {
+      final by = tc.draw(integers(min: 1, max: 10), name: 'by');
+      counter.add(by);
+      model += by;
+    }),
+    Rule('reset', (tc) {
+      counter.reset();
+      model = 0;
+    }),
+  ];
+
+  @override
+  List<Invariant> get invariants => [
+    Invariant('the counter matches its model',
+        (tc) => expect(counter.value, model)),
+  ];
+}
+
+property('a counter matches its model', (tc) async {
+  await runStateful(tc, CounterMachine());
+});
+```
+
+When an invariant breaks, the engine shrinks the *sequence*, so what comes
+back is the shortest script that still breaks it:
+
+```
+step 1 by = 1
+step 2 by = 10
+
+Step 1: increment
+Step 2: increment
+Invariant 'the counter matches its model' does not hold
+```
+
+Rules that cannot run yet are kept off the table with `precondition:`, and
+resources one step makes for a later step to act on go in a `Pool`, which the
+engine chooses from and shrinks over.
+
+Pass `maxConcurrency:` above one and the rules run several at a time,
+interleaving at every `await` in a rule body — which is the concurrency an
+ordinary Dart program has, and enough to find a read and a write that were
+never meant to be separable. The first such case is spent telling the engine
+the run cannot promise to repeat itself; from then on a failure is reported
+against the case that found it, with each worker's steps tagged.
+
+`example/counter.dart` is the machine above, bug and all:
+
+```console
+$ dart run example/counter.dart
+```
+
+## Flutter
+
+Pure-Dart properties run under `flutter test` today, unchanged. `flutter test`
+runs build hooks for the host, so the engine arrives the same way it does
+anywhere else, and `property()` needs nothing from Flutter.
+
+Widget-level property testing is not here. `testWidgets` bodies run inside a
+`FakeAsync` zone, and the package would inherit `flutter_test`'s exact
+`test_api` pin, so it has to be a separate package rather than a dependency
+inside this one. It is planned as `hegel_flutter`.
+
 ## Under it: the engine
 
 The engine is fully reachable from Dart on its own: configure a run, pull test
@@ -77,12 +176,11 @@ them from a reproduce blob. Every function the C ABI exposes is bound and
 exercised. That layer is private (`lib/src/libhegel/`) and documented in
 `docs/libhegel-bindings-plan.md`.
 
-`example/echo.dart` drives a complete run through it:
+`example/echo.dart` runs two properties through the public API, one that
+holds and one that does not, and prints what a counterexample looks like:
 
 ```console
 $ dart run example/echo.dart
-libhegel 0.33.0
-ran 50 valid test cases, passed
 ```
 
 ## The engine binary
@@ -161,6 +259,13 @@ dart run tool/update_libhegel.dart --version 0.33.0
 just regen
 just test
 ```
+
+## A note on the name
+
+There is a separate `hegeltest` package on pub.dev, published by a third party
+shortly before this one, with an API in the same family. It is not this
+package and neither is upstream of the other; both are independent Dart
+frontends to the same engine. This one is `hegel`.
 
 ## Licence
 
