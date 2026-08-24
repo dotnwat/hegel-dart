@@ -3,10 +3,10 @@
 Property-based testing for Dart, powered by the [Hegel](https://hegel.dev)
 engine.
 
-> **Status: 0.1.0.** The generator catalog, the combinators, the collections,
+> **Status: 0.2.0.** The generator catalog, the combinators, the collections,
 > the failure reporting, the example database and stateful testing all work
-> end to end. `docs/property-testing-plan.md` is the plan and says what landed
-> when.
+> end to end; 0.2.0 adds weighted `oneOf` and `collect` statistics.
+> `docs/property-testing-plan.md` is the plan and says what landed when.
 
 ## Writing a property
 
@@ -88,8 +88,56 @@ final users = composite((tc) => User(
 ));
 ```
 
+`oneOf` weights its options when you ask it to, for the case where the
+interesting shape is the rare one:
+
+```dart
+final blocks = oneOf([
+  paragraphs,
+  headings,
+  tables,
+], weights: [8, 3, 1]);
+```
+
+Weight shapes the distribution and nothing else: a counterexample still
+shrinks toward the first option, so put the simplest one first and the report
+will tell you whether the bug needed the complicated case or merely tolerated
+it. Every weight has to be at least one, and their total has to fit a draw.
+
 `import 'package:hegel/generators.dart' as gen;` if you would rather prefix
 them than import forty names.
+
+## What the generators actually produced
+
+A property that passes says less than it looks like if every case was
+trivial.
+`collect` tallies an observation per case, and the distribution prints at the
+end of a verbose run:
+
+```dart
+property('reversing twice gets the list back', (tc) {
+  final items = tc.draw(lists(integers()), name: 'items');
+  tc.collect(switch (items.length) {
+    0 => 'empty',
+    < 5 => 'short',
+    _ => 'long',
+  }, label: 'length');
+  expect(items.reversed.toList().reversed.toList(), items);
+}, settings: const Settings(verbosity: Verbosity.verbose));
+```
+
+```console
+Statistics:
+  length (100 observed):
+    56% (56) long
+    43% (43) short
+    1% (1) empty
+```
+
+One empty list in a hundred cases — worth knowing before you trust the
+property to have covered the empty case. Only valid cases are counted: what a
+case observed before `assume` rejected it, or inside a stateful rule that
+declined, is discarded along with the case.
 
 ## Testing something that remembers
 

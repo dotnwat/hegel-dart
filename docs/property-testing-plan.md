@@ -384,6 +384,10 @@ final class TestCase {
   /// Records an observation for targeted generation; higher is more
   /// interesting. No-op unless the target phase is enabled.
   void target(double value, {String label = 'target'});
+
+  /// Tallies [value] under [label] across the run's valid cases (0.2.0).
+  /// The distribution prints at the end from `Verbosity.verbose` up.
+  void collect(Object? value, {String label = 'collected'});
 }
 ```
 
@@ -398,6 +402,11 @@ final class TestCase {
 - `target` maps to `hegel_target`; the default label serves the common single-objective case
   (Rust auto-labels from source text, which Dart cannot do; Go requires a label; a default is
   the ergonomic middle).
+- `collect` (shipped 0.2.0, §12) is frontend-only: no engine call, a tally per label held on the
+  run. An observation belongs to its case — what a case `assume` rejected, or a stateful rule
+  that declined, observed on the way out is rolled back with it — and the value is rendered to
+  text through the same `repr()` when the call is made, so the tally groups what was true at the
+  point the body said it, not what the object became later.
 - Not exposed: `isFinalReplay`, span methods, the engine handle. Generators reach those through
   a package-internal interface, keeping the algebra closed (§6.3).
 
@@ -476,7 +485,7 @@ are the anchors; family uses "size" — noted in dartdoc).
 | `ipAddresses({InternetAddressType? type})` | `InternetAddress` | `drawIpv4/6` | dart:io is fine — the package is VM-only by nature; unset type = ONE_OF of v4/v6 |
 | `just<T>(T value)` | `T` | no draw | family name |
 | `sampledFrom<T>(List<T> values)` | `T` | index `drawInteger` in SAMPLED_FROM span | throws on empty list at construction |
-| `oneOf<T>(List<Generator<T>> options)` | `T` | §2 ONE_OF shape | uniform; weighted variant deferred |
+| `oneOf<T>(List<Generator<T>> options, {List<int>? weights})` | `T` | §2 ONE_OF shape | uniform unless `weights` pairs one to one with the options (0.2.0); one draw over the total, cut into buckets in declaration order, so the shrink still moves toward the first option. Each weight at least one and the total has to fit a draw |
 | `optional<T>(Generator<T> inner)` | `T?` | ONE_OF-of-null shape under OPTIONAL span | Dart nullability makes this the one frontend where the natural return type is exact |
 | `lists<T>(Generator<T> elements, {int minLength = 0, int? maxLength, bool unique = false})` | `List<T>` | §2 list shape | `unique` by `==`/`hashCode` (Dart's own equality; a Set tracks seen) |
 | `sets<T>(Generator<T> elements, {int minLength = 0, int? maxLength})` | `Set<T>` | SET/SET_ELEMENT + reject duplicates | |
