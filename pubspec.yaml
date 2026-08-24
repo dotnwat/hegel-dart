@@ -7,6 +7,14 @@ repository: https://github.com/dotnwat/hegel-dart
 issue_tracker: https://github.com/dotnwat/hegel-dart/issues
 homepage: https://hegel.dev
 
+# Surfaced as tags on the package's pub.dev page and searchable with
+# `topic:`. pub.dev allows at most five.
+topics:
+  - testing
+  - property-based-testing
+  - fuzzing
+  - test-generation
+
 environment:
   sdk: ^3.13.0
 
