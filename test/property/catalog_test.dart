@@ -191,6 +191,130 @@ void main() {
       expect(values, contains(inInclusiveRange(10, 19)));
       expect(values, contains(inInclusiveRange(100, 109)));
     });
+
+    test('cuts a weighted draw into buckets in declaration order', () {
+      // Weights [2, 1]: one draw over 0..2, where 0 and 1 are the first
+      // option and 2 is the second. Scripting the roll at 2 must land in the
+      // second bucket, inside the same span the uniform version uses.
+      final context = ScriptedContext(<int>[2, 5]);
+
+      final value = TestCase(context).draw(
+        oneOf(
+          <Generator<int>>[
+            integers(min: 0, max: 9),
+            integers(min: 0, max: 9).map((int n) => -n),
+          ],
+          weights: <int>[2, 1],
+        ),
+      );
+
+      expect(value, -5);
+      expect(context.calls, <String>[
+        'start ${SpanLabel.oneOf.value}',
+        'draw 0..2',
+        'start ${SpanLabel.mapped.value}',
+        'draw 0..9',
+        'stop',
+        'stop',
+      ]);
+    });
+
+    test(
+      'keeps the smallest roll on the first option, whatever the weights',
+      () {
+        // The first option's bucket owns the low rolls even when its weight is
+        // the smaller one — which is what lets the shrinker keep the uniform
+        // version's promise.
+        final context = ScriptedContext(<int>[0, 7]);
+
+        final value = TestCase(context).draw(
+          oneOf(
+            <Generator<int>>[
+              integers(min: 0, max: 9),
+              integers(min: 0, max: 9).map((int n) => -n),
+            ],
+            weights: <int>[1, 9],
+          ),
+        );
+
+        expect(value, 7);
+      },
+    );
+
+    test('takes every weighted option across a run', () {
+      final values = drawEveryCase(
+        openSession(),
+        oneOf(
+          <Generator<int>>[just(-1), integers(min: 10, max: 19)],
+          weights: <int>[9, 1],
+        ),
+      );
+
+      expect(values, contains(-1));
+      expect(values, contains(inInclusiveRange(10, 19)));
+    });
+
+    test('refuses weights that do not pair with the options', () {
+      expect(
+        () => oneOf(<Generator<int>>[just(1), just(2)], weights: <int>[1]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('pair one to one'),
+          ),
+        ),
+      );
+    });
+
+    test('carries a total at the very top of the drawable range', () {
+      // 2^63 - 1 split across two options: legal, and the draw range has to
+      // say so exactly.
+      final context = ScriptedContext(<int>[0]);
+
+      final value = TestCase(context).draw(
+        oneOf(
+          <Generator<int>>[just(1), just(2)],
+          weights: <int>[0x7ffffffffffffffe, 1],
+        ),
+      );
+
+      expect(value, 1);
+      expect(context.calls, <String>[
+        'start ${SpanLabel.oneOf.value}',
+        'draw 0..${0x7ffffffffffffffe}',
+        'stop',
+      ]);
+    });
+
+    test('refuses weights whose total overflows', () {
+      expect(
+        () => oneOf(
+          <Generator<int>>[just(1), just(2)],
+          weights: <int>[0x7fffffffffffffff, 1],
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('more proportion than a draw can hold'),
+          ),
+        ),
+      );
+    });
+
+    test('refuses a weight below one', () {
+      expect(
+        () => oneOf(<Generator<int>>[just(1), just(2)], weights: <int>[1, 0]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('below one'),
+          ),
+        ),
+      );
+    });
   });
 
   group('optional', () {

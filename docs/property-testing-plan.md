@@ -1029,10 +1029,13 @@ tests; generated artifacts regenerate with their inputs.
   tokens keep it reachable.
 - **Workload/soak runner** (hegel-go `Workload`, Antithesis) — `runProperty` +
   `Mode.singleTestCase` + `Backend.urandom` are the ingredients; build when a consumer exists.
-- **Statistics/`collect`** — frontend-only counting (kiri_check precedent) gated on verbose
-  output; small, but not v1.
-- **Weighted `oneOf`/`frequency`** — no sibling ships it; adding it would fork the family's
-  generator vocabulary. Revisit if upstream adds engine support.
+- ~~**Statistics/`collect`**~~ — shipped in 0.2.0 as planned here: frontend-only counting,
+  gated on verbose output.
+- ~~**Weighted `oneOf`/`frequency`**~~ — shipped in 0.2.0, on consumer demand (an editor's
+  document generators). The vocabulary-fork concern was answered by extending `oneOf` with a
+  `weights` parameter instead of minting `frequency`; the single weighted draw is cut into
+  buckets in declaration order, so the family's shrink-toward-first promise holds unchanged
+  and no engine support was needed.
 - **Explicit examples** (Rust `explicit_test_case`; engine phase reserved, "none today") —
   requires named-draw binding to pinned values; revisit when the engine's EXPLICIT phase gains
   semantics.

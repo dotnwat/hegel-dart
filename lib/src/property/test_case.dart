@@ -486,6 +486,8 @@ final class TestCase {
 
   final List<Drawn> _draws = <Drawn>[];
   final List<String> _notes = <String>[];
+
+  final List<(String, String)> _collected = <(String, String)>[];
   final List<void Function()> _releases = <void Function()>[];
 
   /// The seam generators draw from.
@@ -501,6 +503,10 @@ final class TestCase {
   /// What the body recorded with [note], in order.
   @internal
   List<String> get notes => _notes;
+
+  /// What the body recorded with [collect], as `(label, value)` pairs.
+  @internal
+  List<(String, String)> get collected => _collected;
 
   /// Runs [release] when this case ends, whatever ends it.
   ///
@@ -691,8 +697,11 @@ final class TestCase {
   /// takes back nothing it drew -- leaving the parameters of a step that
   /// never happened among the values the counterexample is made of.
   @internal
-  ({int draws, int notes}) get mark =>
-      (draws: _draws.length, notes: _notes.length);
+  ({int draws, int notes, int collected}) get mark => (
+    draws: _draws.length,
+    notes: _notes.length,
+    collected: _collected.length,
+  );
 
   /// Labels every draw made since [mark] with [label].
   ///
@@ -708,7 +717,10 @@ final class TestCase {
   /// indistinguishable. Naming the draw is what fixes those, and is worth
   /// doing for the same reason this exists.
   @internal
-  void labelDrawsSince(({int draws, int notes}) mark, String label) {
+  void labelDrawsSince(
+    ({int draws, int notes, int collected}) mark,
+    String label,
+  ) {
     for (var at = mark.draws; at < _draws.length; at++) {
       final Drawn drawn = _draws[at];
       if (drawn.name == null) continue;
@@ -731,9 +743,10 @@ final class TestCase {
   /// should be a range error rather than a silent return that leaves a
   /// declined step's parameters in the counterexample.
   @internal
-  void rollBackTo(({int draws, int notes}) mark) {
+  void rollBackTo(({int draws, int notes, int collected}) mark) {
     _draws.removeRange(mark.draws, _draws.length);
     _notes.removeRange(mark.notes, _notes.length);
+    _collected.removeRange(mark.collected, _collected.length);
   }
 
   /// Takes what [worker] drew and noted into this case, tagged with [tag].
@@ -775,8 +788,12 @@ final class TestCase {
         value: drawn.value,
       ));
     }
+    // Observations are aggregate by nature -- a distribution does not care
+    // which worker contributed a count -- so they come across untagged.
+    _collected.addAll(worker._collected);
     worker._notes.clear();
     worker._draws.clear();
+    worker._collected.clear();
   }
 
   /// Records [message] for the failure report.
@@ -786,4 +803,19 @@ final class TestCase {
   /// when the call is made rather than held as an object, so what the report
   /// shows is what was true at the point the body said it.
   void note(Object? message) => _notes.add('$message');
+
+  /// Counts [value] toward the run's statistics under [label].
+  ///
+  /// The question this answers is about the *generator*, not the property:
+  /// did the cases this run produced actually include the shapes the
+  /// property is supposed to be exercised by? Each call is one observation;
+  /// only valid cases count, so what a case observed on its way to being
+  /// rejected by [assume] -- or inside a stateful rule that declined -- is
+  /// discarded with the case. The distribution is printed at the end of the
+  /// run from [Verbosity.verbose] up, as counts and shares per label.
+  ///
+  /// Recorded as text when the call is made, like [note], so the tally
+  /// groups what was true at the point the body said it.
+  void collect(Object? value, {String label = 'collected'}) =>
+      _collected.add((label, '$value'));
 }

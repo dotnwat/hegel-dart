@@ -96,6 +96,7 @@ Future<void> runProperty(
   // origin because the engine reports one failure per origin, and the account
   // of one bug is no account at all of another.
   final discovered = <String, _Outcome>{};
+  final statistics = <String, Map<String, int>>{};
   try {
     while (true) {
       final engineCase = run.nextTestCase();
@@ -116,6 +117,12 @@ Future<void> runProperty(
         if (outcome.status == engine.TestCaseStatus.interesting) {
           discovered.putIfAbsent(outcome.origin!, () => outcome);
         }
+        if (outcome.status == engine.TestCaseStatus.valid) {
+          for (final (String label, String value) in testCase.collected) {
+            final counts = statistics.putIfAbsent(label, () => <String, int>{});
+            counts[value] = (counts[value] ?? 0) + 1;
+          }
+        }
         engineCase.markComplete(outcome.status, origin: outcome.origin);
       } finally {
         // Before the engine case rather than after. Nothing in the ABI
@@ -129,6 +136,7 @@ Future<void> runProperty(
     }
 
     final result = run.result();
+    _reportStatistics(statistics, resolved, diagnostic);
     try {
       switch (result.status) {
         case RunStatus.passed:
@@ -681,6 +689,40 @@ bool insideTest() {
 /// interesting. Outside one -- a script, a soak run, a `dart run` -- there is
 /// nothing to buffer against, so they go where the engine's own output would.
 ///
+/// Prints what [TestCase.collect] tallied, one block per label.
+///
+/// From [Verbosity.verbose] up only: the tally answers "what did the
+/// generators actually produce", which is a question someone asks of a run
+/// they are watching, and the default reporting keeps a passing run silent.
+/// Shares are of the label's own observations, largest first, so the line to
+/// read is the top one and the surprise is whatever sits at the bottom.
+void _reportStatistics(
+  Map<String, Map<String, int>> statistics,
+  Settings settings,
+  void Function(String line) diagnostic,
+) {
+  if (statistics.isEmpty) return;
+  if (settings.verbosity != Verbosity.verbose &&
+      settings.verbosity != Verbosity.debug) {
+    return;
+  }
+  diagnostic('Statistics:');
+  for (final MapEntry<String, Map<String, int>> label in statistics.entries) {
+    final entries = label.value.entries.toList()
+      ..sort(
+        (a, b) => b.value != a.value
+            ? b.value.compareTo(a.value)
+            : a.key.compareTo(b.key),
+      );
+    final total = entries.fold(0, (int sum, entry) => sum + entry.value);
+    diagnostic('  ${label.key} ($total observed):');
+    for (final MapEntry<String, int> entry in entries) {
+      final share = (entry.value * 100 / total).round();
+      diagnostic('    $share% (${entry.value}) ${entry.key}');
+    }
+  }
+}
+
 /// Verbosity changes the answer. Someone who asked the engine for per-case
 /// progress asked to watch a run happen, and a buffer shown only if the run
 /// fails is the opposite of that: the run they were most likely watching is

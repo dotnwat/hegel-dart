@@ -87,11 +87,14 @@ final class _SampledGenerator<T> extends Generator<T> {
 
 /// Generates values from whichever of [options] each case picks.
 ///
-/// The options are weighted equally. A counterexample shrinks toward the
-/// first of them, so an `oneOf` reads best with its simplest option first:
+/// The options are weighted equally unless [weights] says otherwise: it
+/// pairs with [options] one to one, every weight at least one, and an option
+/// is drawn in proportion to its share. A counterexample shrinks toward the
+/// first option either way — weight shapes the distribution, never the
+/// counterexample — so an `oneOf` reads best with its simplest option first:
 /// the report then tells you whether the bug needed the complicated case or
 /// merely tolerated it.
-Generator<T> oneOf<T>(List<Generator<T>> options) {
+Generator<T> oneOf<T>(List<Generator<T>> options, {List<int>? weights}) {
   if (options.isEmpty) {
     throw ArgumentError.value(
       options,
@@ -99,7 +102,47 @@ Generator<T> oneOf<T>(List<Generator<T>> options) {
       'is empty, and a generator has to be able to produce something',
     );
   }
-  return _OneOfGenerator<T>(List<Generator<T>>.of(options));
+  if (weights == null) {
+    return _OneOfGenerator<T>(List<Generator<T>>.of(options));
+  }
+  if (weights.length != options.length) {
+    throw ArgumentError.value(
+      weights,
+      'weights',
+      'has ${weights.length} entries for ${options.length} options, '
+          'and the two pair one to one',
+    );
+  }
+  var total = 0;
+  for (final weight in weights) {
+    if (weight < 1) {
+      throw ArgumentError.value(
+        weights,
+        'weights',
+        'holds $weight, and a weight below one names an option that '
+            'cannot be drawn — leave it out instead',
+      );
+    }
+    // Checked accumulation: ints wrap silently, and a wrapped total would
+    // make the draw range garbage — an engine refusal at best, options
+    // quietly unreachable at worst. Both operands are positive here, so a
+    // sum below either of them is exactly an overflow.
+    final next = total + weight;
+    if (next < total) {
+      throw ArgumentError.value(
+        weights,
+        'weights',
+        'sum past ${0x7fffffffffffffff}, which is more proportion than '
+            'a draw can hold',
+      );
+    }
+    total = next;
+  }
+  return _WeightedOneOfGenerator<T>(
+    List<Generator<T>>.of(options),
+    List<int>.of(weights),
+    total,
+  );
 }
 
 /// One of several generators, chosen by a drawn index.
@@ -117,6 +160,31 @@ final class _OneOfGenerator<T> extends Generator<T> {
     // Inside the span the index was drawn in, so the shrinker can move the
     // choice and what it produced together: a branch simplified toward the
     // first one takes its draws with it.
+    return _options[index].generate(testCase);
+  });
+}
+
+/// One of several generators, chosen in proportion to its weight.
+final class _WeightedOneOfGenerator<T> extends Generator<T> {
+  const _WeightedOneOfGenerator(this._options, this._weights, this._total);
+
+  final List<Generator<T>> _options;
+  final List<int> _weights;
+  final int _total;
+
+  @override
+  T generate(TestCase testCase) => testCase.span(SpanLabel.oneOf, () {
+    // One draw over the weights' total, cut into a bucket per option in
+    // declaration order. Smaller raw values land in earlier buckets, which
+    // is what keeps the uniform version's promise: the shrinker moving the
+    // draw toward zero moves the choice toward the first option, whatever
+    // the weights are.
+    var roll = testCase.context.drawInteger(min: 0, max: _total - 1);
+    var index = 0;
+    while (roll >= _weights[index]) {
+      roll -= _weights[index];
+      index += 1;
+    }
     return _options[index].generate(testCase);
   });
 }
