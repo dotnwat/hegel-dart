@@ -113,6 +113,7 @@ Generator<T> oneOf<T>(List<Generator<T>> options, {List<int>? weights}) {
           'and the two pair one to one',
     );
   }
+  var total = 0;
   for (final weight in weights) {
     if (weight < 1) {
       throw ArgumentError.value(
@@ -122,10 +123,25 @@ Generator<T> oneOf<T>(List<Generator<T>> options, {List<int>? weights}) {
             'cannot be drawn — leave it out instead',
       );
     }
+    // Checked accumulation: ints wrap silently, and a wrapped total would
+    // make the draw range garbage — an engine refusal at best, options
+    // quietly unreachable at worst. Both operands are positive here, so a
+    // sum below either of them is exactly an overflow.
+    final next = total + weight;
+    if (next < total) {
+      throw ArgumentError.value(
+        weights,
+        'weights',
+        'sum past ${0x7fffffffffffffff}, which is more proportion than '
+            'a draw can hold',
+      );
+    }
+    total = next;
   }
   return _WeightedOneOfGenerator<T>(
     List<Generator<T>>.of(options),
     List<int>.of(weights),
+    total,
   );
 }
 
@@ -150,8 +166,7 @@ final class _OneOfGenerator<T> extends Generator<T> {
 
 /// One of several generators, chosen in proportion to its weight.
 final class _WeightedOneOfGenerator<T> extends Generator<T> {
-  _WeightedOneOfGenerator(this._options, this._weights)
-    : _total = _weights.fold(0, (sum, weight) => sum + weight);
+  const _WeightedOneOfGenerator(this._options, this._weights, this._total);
 
   final List<Generator<T>> _options;
   final List<int> _weights;

@@ -267,6 +267,42 @@ void main() {
       );
     });
 
+    test('carries a total at the very top of the drawable range', () {
+      // 2^63 - 1 split across two options: legal, and the draw range has to
+      // say so exactly.
+      final context = ScriptedContext(<int>[0]);
+
+      final value = TestCase(context).draw(
+        oneOf(
+          <Generator<int>>[just(1), just(2)],
+          weights: <int>[0x7ffffffffffffffe, 1],
+        ),
+      );
+
+      expect(value, 1);
+      expect(context.calls, <String>[
+        'start ${SpanLabel.oneOf.value}',
+        'draw 0..${0x7ffffffffffffffe}',
+        'stop',
+      ]);
+    });
+
+    test('refuses weights whose total overflows', () {
+      expect(
+        () => oneOf(
+          <Generator<int>>[just(1), just(2)],
+          weights: <int>[0x7fffffffffffffff, 1],
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError error) => error.message,
+            'message',
+            contains('more proportion than a draw can hold'),
+          ),
+        ),
+      );
+    });
+
     test('refuses a weight below one', () {
       expect(
         () => oneOf(<Generator<int>>[just(1), just(2)], weights: <int>[1, 0]),
