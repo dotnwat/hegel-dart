@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- `oneOf` takes optional `weights`, pairing one to one with its options: an
+  option is drawn in proportion to its share, and a counterexample still
+  shrinks toward the first option — weight shapes the distribution, never
+  the shrink. The first consumer's document generators are what pulled this
+  out of the deferred list.
+- `TestCase.collect(value, label: ...)` tallies observations per label
+  across the valid cases of a run, and the distribution prints at the end
+  from `Verbosity.verbose` up — the answer to "did the generators actually
+  produce the shapes this property is supposed to exercise?". Observations
+  made by a case `assume` rejected, or inside a stateful rule that declined,
+  are discarded with their case.
+
 ## 0.1.0
 
 First release.

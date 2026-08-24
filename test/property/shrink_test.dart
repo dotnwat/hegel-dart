@@ -100,6 +100,32 @@ void main() {
       expect(report, contains("value = 'a51'"));
     });
 
+    test(
+      'shrinks a weighted choice to the first option, whatever the weights',
+      () async {
+        // The heavy weight sits on the second option, so most cases start
+        // there — and the counterexample still has to come back from the
+        // first, because weight shapes the distribution, not the shrink.
+        final report = await shrunkReport((TestCase testCase) {
+          final value = testCase.draw(
+            oneOf(
+              <Generator<String>>[
+                integers(min: 0, max: 1000).map((int n) => 'a$n'),
+                integers(min: 0, max: 1000).map((int n) => 'b$n'),
+              ],
+              weights: <int>[1, 9],
+            ),
+            name: 'value',
+          );
+          if (int.parse(value.substring(1)) > 50) {
+            throw StateError('$value is too big');
+          }
+        });
+
+        expect(report, contains("value = 'a51'"));
+      },
+    );
+
     test('stays in the option that fails, and shrinks that one', () async {
       // Only the second option reaches past ten, so shrinking the choice
       // toward the first would lose the failure. It has to shrink what is
