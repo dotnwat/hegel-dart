@@ -19,6 +19,7 @@ docs/
 # this one. It cannot build from inside the published archive, and a consumer
 # has no use for it; it lives in the repository.
 example/flutter/
+example/flutter_demo/
 
 # Development-only tooling.
 tool/

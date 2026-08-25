@@ -29,6 +29,7 @@ import 'src/machine.dart';
 
 export 'src/actions.dart'
     show ActionPolicy, UiAction, UiActionKind, discoverActions, perform;
+export 'src/capture.dart' show loadRealFonts, saveFrame;
 export 'src/checks.dart'
     show
         accessibilityChecks,

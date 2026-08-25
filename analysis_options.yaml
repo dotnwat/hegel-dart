@@ -12,6 +12,7 @@ analyzer:
   # copy of this configuration.
   exclude:
     - example/flutter/**
+    - example/flutter_demo/**
   language:
     strict-casts: true
     strict-inference: true

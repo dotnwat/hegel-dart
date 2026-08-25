@@ -298,13 +298,13 @@ jobs:
                  exit 1; }
           git diff --exit-code
 
-  # The Flutter example is a package of its own -- a Flutter SDK behind it,
-  # its own resolution, its own analysis configuration -- so it gets a job of
-  # its own. The root lint job cannot analyze it, because `dart analyze` has
-  # no `package:flutter` to resolve; analysis_options.yaml excludes it there
-  # and it is analyzed here instead.
+  # The Flutter packages are packages of their own -- a Flutter SDK behind
+  # them, their own resolution, their own analysis configuration -- so they
+  # get a job of their own. The root lint job cannot analyze them, because
+  # `dart analyze` has no `package:flutter` to resolve; analysis_options.yaml
+  # excludes them there and they are analyzed here instead.
   flutter:
-    name: flutter example
+    name: flutter examples
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -344,3 +344,29 @@ jobs:
       - name: Test
         working-directory: example/flutter
         run: flutter test
+
+      - name: Resolve the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter pub get
+
+      - name: Analyze the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter analyze --fatal-infos
+
+      - name: Test the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter test
+
+      # The demonstration only demonstrates something for as long as the bug
+      # is still in it, so this step expects a failure: the property finds the
+      # bug and shrinks it, the run fails, and that is the pass. A green
+      # `flutter test` here would mean somebody fixed the calculator and left
+      # the recording with nothing to find.
+      - name: The reference property still finds the demonstration bug
+        working-directory: example/flutter_demo
+        run: |
+          if flutter test demo/reference_property_test.dart; then
+            echo "the property passed: the demonstration bug is gone"
+            exit 1
+          fi
+          echo "still found, and still shrinks"
