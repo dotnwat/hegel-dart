@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- The build hook no longer fails a Flutter build. A hook is run once for
+  every kind of asset the embedder is collecting, and `flutter run` runs one
+  pass that asks for none at all; the hook read the code-asset configuration
+  before checking whether code assets had been asked for, which throws, and
+  took the whole build down with it before the app started. It now answers
+  that pass with nothing. `dart test` and `dart run` never made the call, so
+  this was only ever reachable from Flutter.
+
 ## 0.2.0
 
 - `oneOf` takes optional `weights`, pairing one to one with its options: an

@@ -228,6 +228,47 @@ void main() {
     });
   });
 
+  // A build hook is run once for every kind of asset the embedder collects,
+  // and `flutter run` runs one pass that asks for none. This is the input it
+  // writes for that pass, verbatim from a run that used to crash on it.
+  group('a pass that asks for no assets at all', () {
+    test('produces nothing rather than failing the build', () async {
+      final out = subdirectory('out');
+      final shared = subdirectory('shared');
+      final outFile = File.fromUri(out.uri.resolve('output.json'));
+      final config = File.fromUri(out.uri.resolve('input.json'))
+        ..writeAsStringSync(
+          jsonEncode(<String, Object?>{
+            'assets': <String, Object?>{},
+            'config': <String, Object?>{
+              'build_asset_types': <String>[],
+              'linking_enabled': false,
+            },
+            'out_dir_shared': shared.uri.toFilePath(),
+            'out_file': outFile.uri.toFilePath(),
+            'package_name': 'hegel',
+            'package_root': root.uri.toFilePath(),
+            'user_defines': <String, Object?>{},
+          }),
+        );
+
+      await build(
+        <String>['--config=${config.path}'],
+        (BuildInput input, BuildOutputBuilder output) => buildLibhegelAsset(
+          input,
+          output,
+          pin: testPin,
+          // Nothing may be resolved on a pass with nothing to resolve it for.
+          fetch: neverFetch,
+        ),
+      );
+
+      final produced =
+          jsonDecode(outFile.readAsStringSync()) as Map<String, Object?>;
+      expect(produced['assets'], anyOf(isNull, isEmpty));
+    });
+  });
+
   group('refusals', () {
     test('a download that does not match the pin', () async {
       await expectLater(
