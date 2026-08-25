@@ -765,6 +765,14 @@ it must be a separate package with its own constraint dance rather than a Flutte
 inside `hegel`. Out of scope for this plan's commits; in scope for its README ("works with
 Flutter today for pure-Dart properties; widget-level PBT is coming as hegel_flutter").
 
+What `flutter test` running the hook did not cover, found in 0.3.0 by pointing a real app at
+the package: a build hook is invoked once for **every kind of asset** the embedder collects,
+and `flutter run` makes one pass with an empty `build_asset_types` — asking for nothing.
+`input.config.code` throws rather than answering on such a pass, so any read of the code-asset
+configuration has to sit behind `input.config.buildCodeAssets`. `dart test` and `dart run`
+never make the empty-asset pass, which is why the suite and CI were green while `flutter run`
+failed before the app started. Pinned by `test/hook/build_test.dart`.
+
 ---
 
 ## 7. Architecture and layout
@@ -1030,7 +1038,14 @@ tests; generated artifacts regenerate with their inputs.
 ## 12. Deferred, with revisit triggers
 
 - **`hegel_flutter` (`propertyWidgets`)** — after 0.1.0; the constraints are documented in
-  §6.9 and the flutter_test pin makes it structurally a separate package.
+  §6.9 and the flutter_test pin makes it structurally a separate package. `example/flutter`
+  (0.3.0) is the prototype, shaped as the package it is meant to become: a `UiSurface` over the
+  widget tree, generated device configurations, a stateful model of a screen, and a monkey
+  driven from the semantics tree. It confirms §6.9's constraints in a running suite — the
+  error slot drained per case, the tree remounted between cases (by pumping a different root
+  widget type, which discards the old element tree; the `UniqueKey` sketched above is not
+  needed), the view and image caches reset — and each of its three demonstrations finds and
+  shrinks a real bug. Promote it when the API has stopped moving.
 - **Codegen derive (`hegel_generator`)** for user classes — revisit if/when augmentations ship
   or user demand shows `composite()` fatigue; mocktail-vs-mockito is the ecosystem precedent
   that zero-codegen explicitness is a feature, not a gap.
