@@ -3,9 +3,10 @@
 Property-based testing for Dart, powered by the [Hegel](https://hegel.dev)
 engine.
 
-> **Status: 0.2.0.** The generator catalog, the combinators, the collections,
+> **Status: 0.3.0.** The generator catalog, the combinators, the collections,
 > the failure reporting, the example database and stateful testing all work
-> end to end; 0.2.0 adds weighted `oneOf` and `collect` statistics.
+> end to end; 0.2.0 added weighted `oneOf` and `collect` statistics, and
+> 0.3.0 fixes the build hook under Flutter.
 > `docs/property-testing-plan.md` is the plan and says what landed when.
 
 ## Writing a property
@@ -210,10 +211,18 @@ Pure-Dart properties run under `flutter test` today, unchanged. `flutter test`
 runs build hooks for the host, so the engine arrives the same way it does
 anywhere else, and `property()` needs nothing from Flutter.
 
-Widget-level property testing is not here. `testWidgets` bodies run inside a
-`FakeAsync` zone, and the package would inherit `flutter_test`'s exact
+Widget-level property testing is not in this package. `testWidgets` bodies run
+inside a `FakeAsync` zone, and the package would inherit `flutter_test`'s exact
 `test_api` pin, so it has to be a separate package rather than a dependency
 inside this one. It is planned as `hegel_flutter`.
+
+`example/flutter` is where that package is being worked out, and it runs
+today: three demonstrations of what a user-interface property can claim — a
+configuration sweep held against Flutter's own error reporting, a model the
+screen is checked against, and a monkey that reads the semantics tree to find
+what it can do. Each finds a real bug and shrinks it. It lives in the
+repository rather than the published archive; `example/flutter/README.md` says
+what it costs and what it cannot reach.
 
 ## Under it: the engine
 

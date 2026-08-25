@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - The build hook no longer fails a Flutter build. A hook is run once for
   every kind of asset the embedder is collecting, and `flutter run` runs one
@@ -9,6 +9,13 @@
   took the whole build down with it before the app started. It now answers
   that pass with nothing. `dart test` and `dart run` never made the call, so
   this was only ever reachable from Flutter.
+- `example/flutter` points the same generators, shrinking and stateful
+  testing at a user interface, in three shapes: a configuration sweep whose
+  oracle is Flutter's own error reporting, a model the screen is held
+  against, and a monkey that reads the semantics tree and insists only that
+  the app go on working. It is a package of its own rather than part of the
+  published archive — Flutter cannot be a dependency of a pure Dart package
+  — and it is where `hegel_flutter` is being worked out.
 
 ## 0.2.0
 
