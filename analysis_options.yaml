@@ -6,6 +6,12 @@
 include: package:lints/recommended.yaml
 
 analyzer:
+  # The Flutter example is a package of its own with a Flutter SDK behind it.
+  # `dart analyze` here has neither, so every `package:flutter` import in it
+  # would be an unresolved URI. It is analyzed by its own job, with its own
+  # copy of this configuration.
+  exclude:
+    - example/flutter/**
   language:
     strict-casts: true
     strict-inference: true

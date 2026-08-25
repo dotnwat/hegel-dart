@@ -15,6 +15,11 @@ pubspec.lock
 # asking for it to be renamed to doc/, which would break every reference to it.
 docs/
 
+# The Flutter example is a package of its own, with a path dependency back on
+# this one. It cannot build from inside the published archive, and a consumer
+# has no use for it; it lives in the repository.
+example/flutter/
+
 # Development-only tooling.
 tool/
 .pre-commit-config.yaml
