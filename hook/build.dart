@@ -55,6 +55,14 @@ Future<void> buildLibhegelAsset(
   EngineFetch fetch = httpEngineFetch,
   Map<String, String>? environment,
 }) async {
+  // A build hook is run once for every kind of asset the embedder is
+  // collecting, and Flutter runs one pass that asks for none at all -- an
+  // empty `build_asset_types`. There is nothing for this hook to contribute
+  // to that pass, and `input.config.code` throws rather than answering when
+  // code assets were not asked for, so the check has to come before anything
+  // reads it. Without this, `flutter run` fails before the app starts.
+  if (!input.config.buildCodeAssets) return;
+
   final overridePath = input.userDefines.path(libhegelPathDefine);
   final cacheDirPath = input.userDefines.path(cacheDirDefine);
 

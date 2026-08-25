@@ -1,0 +1,43 @@
+# The Flutter half of hegel, parked in the example directory.
+#
+# Shaped as the package it is meant to become: the library lives under lib/
+# as `hegel_flutter`, the demos are its tests, and lifting it out of this
+# repository is a `git mv` and a change of the path dependency below to a
+# version constraint. It is not published from here -- the root .pubignore
+# keeps it out of the hegel archive -- because a package cannot depend on
+# Flutter and stay a pure Dart package, which is the whole reason it is
+# separate.
+name: hegel_flutter
+description: >-
+  Property-based testing for Flutter user interfaces, powered by hegel.
+  Generators for device configuration, hermetic per-case widget setup,
+  reusable interface invariants, and stateful testing that shrinks a random
+  walk of taps to the shortest script that still breaks something.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # This is a testing library, so the test framework is a real dependency
+  # rather than a development one: lib/ imports it.
+  flutter_test:
+    sdk: flutter
+  hegel:
+    path: ../..
+  # @isTest on widgetProperty, so an IDE and the reporter treat it as one.
+  meta: ^1.19.0
+  # Naming where a property was written, for the example database key. Already
+  # present through hegel; the house rule is that nothing is relied on
+  # transitively.
+  stack_trace: ^1.12.0
+  # TestHandle.current, for the full name package:test knows a test by --
+  # group prefixes included -- which is what the example database files a
+  # counterexample under.
+  test_api: '>=0.7.11 <0.8.0'
+
+dev_dependencies:
+  lints: ^6.1.0

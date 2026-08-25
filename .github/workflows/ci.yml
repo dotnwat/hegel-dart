@@ -297,3 +297,76 @@ jobs:
             || { echo "the temporary doc entry point was not cleaned up"; \
                  exit 1; }
           git diff --exit-code
+
+  # The Flutter packages are packages of their own -- a Flutter SDK behind
+  # them, their own resolution, their own analysis configuration -- so they
+  # get a job of their own. The root lint job cannot analyze them, because
+  # `dart analyze` has no `package:flutter` to resolve; analysis_options.yaml
+  # excludes them there and they are analyzed here instead.
+  flutter:
+    name: flutter examples
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Cloned at a tag rather than installed by a third-party action: one
+      # fewer dependency to pin and audit, and the version is the one the
+      # example is developed against rather than whatever "stable" means on
+      # the day the job runs.
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.1 \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      # `flutter test` runs the build hook for the host, so it needs the same
+      # engine every other job does.
+      - name: Cache the pinned libhegel engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/hegel-dart/natives
+          key: >-
+            libhegel-flutter-${{
+            hashFiles('lib/src/libhegel/version.g.dart') }}
+
+      - name: Resolve
+        working-directory: example/flutter
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: example/flutter
+        run: flutter analyze --fatal-infos
+
+      - name: Test
+        working-directory: example/flutter
+        run: flutter test
+
+      - name: Resolve the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter pub get
+
+      - name: Analyze the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter analyze --fatal-infos
+
+      - name: Test the demonstration app
+        working-directory: example/flutter_demo
+        run: flutter test
+
+      # The demonstration only demonstrates something for as long as the bug
+      # is still in it, so this step expects a failure: the property finds the
+      # bug and shrinks it, the run fails, and that is the pass. A green
+      # `flutter test` here would mean somebody fixed the calculator and left
+      # the recording with nothing to find.
+      - name: The reference property still finds the demonstration bug
+        working-directory: example/flutter_demo
+        run: |
+          if flutter test demo/reference_property_test.dart; then
+            echo "the property passed: the demonstration bug is gone"
+            exit 1
+          fi
+          echo "still found, and still shrinks"

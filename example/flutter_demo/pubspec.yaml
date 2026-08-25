@@ -1,0 +1,30 @@
+# Abacus: the app the demonstration is recorded against.
+#
+# It depends on nothing but Flutter. hegel is a development dependency,
+# because the properties are tests and the app under test should not know it
+# is being tested.
+name: abacus
+description: A calculator with a bug in the wiring between its screens.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # Properties over the arithmetic, which is ordinary Dart.
+  hegel:
+    path: ../..
+  # Properties over the interface.
+  hegel_flutter:
+    path: ../flutter
+  lints: ^6.1.0
+
+flutter:
+  uses-material-design: true

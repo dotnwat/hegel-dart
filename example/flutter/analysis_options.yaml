@@ -1,0 +1,32 @@
+# The same configuration the root package uses, so code here reads like code
+# there. This directory is excluded from the root analysis -- it cannot be
+# analyzed without a Flutter SDK and a `flutter pub get` of its own -- so it
+# needs its own copy rather than inheriting one.
+include: package:lints/recommended.yaml
+
+analyzer:
+  # `flutter pub get` writes these in and puts them back if they are removed.
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - comment_references
+    - directives_ordering
+    - prefer_final_locals
+    - throw_in_finally
+    - unawaited_futures
+    - unnecessary_parenthesis
+    - use_super_parameters
